@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { PHYSICS_DT, QUALITY } from '../config.js';
 import { settings } from '../settings.js';
-import { CARS } from '../data/cars.js';
+import * as garageData from './garage.js';
 import { CHAPTERS } from '../data/chapters.js';
 import { Car } from './Car.js';
 import { CarModel } from './CarModel.js';
@@ -24,6 +24,7 @@ import { Driver } from '../ai/Driver.js';
 import { GridRace } from './GridRace.js';
 import { Hud } from '../ui/Hud.js';
 import { fmtTime } from '../util/format.js';
+import { audio } from '../audio/Audio.js';
 
 const COUNTDOWN = 3.2;      // seconds of 3-2-1 before GO
 const FINISH_DELAY = 1.7;   // seconds of roll-out before the result screen
@@ -85,6 +86,7 @@ export class Game {
   // ---------------------------------------------------------------- setup
   loadTrack(id, { laps } = {}) {
     const def = getTrackDef(id);
+    audio.playMusic(def.chapter);
     if (this.trackId === id && (laps ?? def.laps) === this.soloRace.laps) { this.enterDemo(); return; }
     this.trackId = id;
     const chapter = CHAPTERS[def.chapter];
@@ -105,9 +107,9 @@ export class Game {
     this.skids = new SkidMarks(this.quality.skids);
     this.scene.add(this.skids.mesh, this.smoke.mesh);
 
-    const car = CARS[0];
-    this.car = new Car(car.stats);
-    this.model = new CarModel(car.color, car.accent);
+    const lo = garageData.loadout();
+    this.car = new Car(lo.stats);
+    this.model = new CarModel(lo.color, lo.accent);
     this.scene.add(this.model.group);
 
     this.bot = new Driver(this.track, { speedScale: 0.8 });
@@ -169,6 +171,15 @@ export class Game {
     this.updateTouch();
   }
 
+  /** Use the car + paint currently chosen in the garage (stats apply immediately). */
+  applyLoadout() {
+    const lo = garageData.loadout();
+    this.car.setStats(lo.stats);
+    this.scene.remove(this.model.group);
+    this.model = new CarModel(lo.color, lo.accent);
+    this.scene.add(this.model.group);
+  }
+
   /** Reset to the grid and run the 3-2-1 countdown, then the clock starts. */
   startRace(gp = null) {
     if (gp) this.setupGrid(gp.difficulty); else this.clearGrid();
@@ -176,6 +187,8 @@ export class Game {
     this.mode = 'countdown';
     this.paused = false;
     this.countdown = COUNTDOWN;
+    this.lastCountN = 0;
+    audio.duck(false);
     this.finishTimer = 0;
     this.hud.setVisible(true);
     this.hud.setGp(!!this.grid);
@@ -186,6 +199,67 @@ export class Game {
     this.hud.driftReset();
     if (this.grid) this.updateStandings(true);
     this.updateTouch();
+  }
+
+  /** Graphics quality changed in settings: rebuild the scene with the new preset. */
+  applyQuality() {
+    this.quality = QUALITY[settings.quality] || QUALITY.high;
+    this.renderer.shadowMap.enabled = this.quality.shadows;
+    this.resize();
+    if (this.trackId) {
+      const id = this.trackId, laps = this.soloRace.laps;
+      this.trackId = null;
+      this.loadTrack(id, { laps });
+    }
+  }
+
+  // ---------------------------------------------------------------- garage
+  buildGarage() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x262922);
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x4a4a38, 1.3));
+    const sun = new THREE.DirectionalLight(0xffe2b8, 2.2); sun.position.set(-6, 9, 5); scene.add(sun);
+    const plat = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.9, 0.4, 24), new THREE.MeshLambertMaterial({ color: 0x3a3d34, flatShading: true }));
+    plat.position.y = -0.2; scene.add(plat);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.07, 6, 48), new THREE.MeshBasicMaterial({ color: 0xffcf3a }));
+    ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; scene.add(ring);
+    const cam = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.5, 60);
+    this.garage = { scene, cam, model: null, spin: 0.6 };
+  }
+
+  /** Show a car on the turntable (garage screen). */
+  previewCar(car, color) {
+    if (!this.garage) this.buildGarage();
+    const g = this.garage;
+    if (g.model) g.scene.remove(g.model.group);
+    g.model = new CarModel(color, car.accent);
+    g.scene.add(g.model.group);
+  }
+
+  enterGarage() {
+    this.clearGrid();
+    this.mode = 'garage';
+    this.paused = false;
+    this.hud.setVisible(false);
+    this.hud.hideHints();
+    this.updateTouch();
+    if (!this.garage) this.buildGarage();
+    const lo = garageData.loadout();
+    this.previewCar(lo.car, lo.color);
+  }
+
+  drawGarage(dt) {
+    audio.engineUpdate({ active: false });
+    const g = this.garage, cam = g.cam;
+    const aspect = innerWidth / innerHeight;
+    if (cam.aspect !== aspect) { cam.aspect = aspect; cam.updateProjectionMatrix(); }
+    if (g.model) g.model.group.rotation.y += dt * g.spin;
+    // keep the car in the free part of the screen (panel sits at the bottom, or on the right in landscape)
+    const land = aspect > 1.1;
+    const dist = land ? 12 : Math.max(13, 13.2 / aspect);
+    cam.position.set(dist * 0.62, dist * 0.42, dist * 0.7);
+    if (land) cam.lookAt(2.4, 0.4, -2.1); else cam.lookAt(0, -1.6, 0);
+    this.renderer.render(g.scene, cam);
   }
 
   pause() { if (!this.canPause()) return false; this.paused = true; this.updateTouch(); return true; }
@@ -215,6 +289,7 @@ export class Game {
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
 
     const inp = this.input.update(dt);
+    if (this.mode === 'garage') { this.drawGarage(dt); return; }
     if (!this.paused) {
       this.time += dt;
       this.stepMode(dt);
@@ -232,10 +307,13 @@ export class Game {
     if (this.mode === 'countdown') {
       this.countdown -= dt;
       const n = Math.ceil(this.countdown - (COUNTDOWN - 3));
-      if (this.countdown > COUNTDOWN - 3) this.hud.countdown(String(n));
-      else if (this.countdown > 0) this.hud.countdown(null);
+      if (this.countdown > COUNTDOWN - 3) {
+        this.hud.countdown(String(n));
+        if (n !== this.lastCountN) { this.lastCountN = n; audio.countdown(n); }
+      } else if (this.countdown > 0) this.hud.countdown(null);
       if (this.countdown <= 0) {
         this.mode = 'racing';
+        audio.go();
         this.hud.countdown('GO!', 0.7);
         this.hud.showHints();
       }
@@ -257,6 +335,7 @@ export class Game {
     const control = this.mode === 'racing' ? inp : this.bot.drive(car);
     if (this.grid) {
       this.grid.step(PHYSICS_DT, control);
+      for (const b of this.grid.bumps) if (b.entry.isPlayer && b.strength > 0.1 && this.time - (this.lastBumpSfx || 0) > 0.15) { this.lastBumpSfx = this.time; audio.bump(); }
     } else {
       car.step(control, PHYSICS_DT, this.track);
       if (this.mode === 'racing') this.race.update(car, PHYSICS_DT);
@@ -264,11 +343,12 @@ export class Game {
     if (this.mode !== 'racing') return;
 
     for (const e of car.events) {
-      if (e.type === 'boost') this.pendingBoost = e.tier;
+      if (e.type === 'boost') { this.pendingBoost = e.tier; audio.boost(); }
+      else if (e.type === 'wall') audio.thud(e.strength);
       else if (e.type === 'driftEnd') { this.hud.driftEnded(e.score, this.pendingBoost ?? -1); this.pendingBoost = undefined; }
     }
     for (const e of this.race.events) {
-      if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${fmtTime(e.lapTime)}`);
+      if (e.type === 'lap' && !this.race.finished) { this.hud.toast(`LAP ${e.lap + 1}   ${fmtTime(e.lapTime)}`); audio.lap(); }
       else if (e.type === 'finish') {
         this.mode = 'finished';
         this.finishTimer = FINISH_DELAY;
@@ -348,6 +428,11 @@ export class Game {
       this.world.followShadow(car.x, car.z);
       this.builder.updateChevrons(car.q.s ?? 0);
     }
+    audio.engineUpdate({
+      active: (this.mode === 'racing' || this.mode === 'countdown') && !this.paused,
+      speed: car.speed, maxSpeed: car.stats.maxSpeed, braking: this.mode === 'racing' && inp.brake > 0.05,
+      slide: Math.min(1, car.gripBlend * Math.abs(car.slip) * 2.2), boosting: car.boosting,
+    });
     this.smoke.update(this.time);
     this.skids.update(this.time);
     if (this.mode !== 'demo') {

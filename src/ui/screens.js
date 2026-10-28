@@ -1,6 +1,7 @@
 // Menu screens. Each function returns a screen object for UI.open().
 
 import { el, button } from './UI.js';
+import { audio } from '../audio/Audio.js';
 import { CHAPTERS } from '../data/chapters.js';
 import { fmtTime, fmtScore } from '../util/format.js';
 import * as career from '../game/career.js';
@@ -9,6 +10,9 @@ import { DIFFICULTIES } from '../data/difficulty.js';
 import { REWARD_COLORS } from '../data/cars.js';
 import { specOf, gpTracks, getTrackDef } from '../tracks/trackDefs.js';
 import { Track } from '../tracks/Track.js';
+import * as garage from '../game/garage.js';
+import { CARS } from '../data/cars.js';
+import { settings, save } from '../settings.js';
 import { drawTrackPath } from './Minimap.js';
 
 const LOCK = '<svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>';
@@ -29,8 +33,7 @@ export function mainMenu(app) {
   root.innerHTML = `<div class="logo"><span>DRIFT</span><span>KINGS</span></div>`;
   const list = el('div', 'stack');
   const career_ = button('Career', () => app.openLevelSelect(), 'primary');
-  const comingSoon = (label) => { const b = button(`${label}<small>soon</small>`, null); b.classList.add('disabled'); return b; };
-  list.append(career_, button('Grand Prix', () => app.openGpSelect()), comingSoon('Garage'), comingSoon('Settings'));
+  list.append(career_, button('Grand Prix', () => app.openGpSelect()), button('Garage', () => app.openGarage()), button('Settings', () => app.openSettings()));
   root.appendChild(list);
   const stars = el('div', 'total', `<span class="st on">★</span> ${career.totalStars()} / ${career.maxStars()}`);
   root.appendChild(stars);
@@ -155,6 +158,7 @@ export function results(app, r) {
       <div class="sub">${failed ? `1 star needs ${fmtTime(lvl.bronze)}` : rec.newStars ? `+${rec.newStars} new star${rec.newStars > 1 ? 's' : ''}` : ''}</div>
       <div class="drift">Drift score <b>${fmtScore(driftScore)}</b></div>
       ${rec.unlockedChapters.length ? `<div class="unlocked">Chapter ${rec.unlockedChapters[0] + 1} unlocked: ${CHAPTERS[rec.unlockedChapters[0]].name}</div>` : ''}
+      ${(rec.unlockedCars || []).length ? `<div class="unlocked">New car: ${rec.unlockedCars.map((c) => c.name).join(', ')}</div>` : ''}
     </div>`;
   const actions = el('div', 'row');
   const retry = button('Retry', () => app.startCareerRace(lvl.id));
@@ -163,6 +167,11 @@ export function results(app, r) {
   const menu = button('Menu', () => app.openLevelSelect(lvl.chapter, lvl.level));
   actions.append(retry, nextB, menu);
   root.appendChild(actions);
+  // sounds in time with the star animation (CSS delays 0.75 / 1.15 / 1.55 s)
+  const later = (ms, fn) => setTimeout(() => { if (root.isConnected) fn(); }, ms);
+  if (failed) later(300, () => audio.fail());
+  else for (let i = 0; i < rec.stars; i++) later(750 + i * 400, () => audio.star(i));
+  if (rec.newBest && !failed) later(250, () => audio.fanfare());
   return { el: root, autofocus: next ? nextB : retry, onBack: () => app.openLevelSelect(lvl.chapter, lvl.level) };
 }
 
@@ -298,5 +307,211 @@ export function gpResults(app, r) {
   if (!nextId) next.classList.add('disabled');
   actions.append(retry, next, button('Menu', () => app.openGpSelect(diff, trackId)));
   root.appendChild(actions);
+  setTimeout(() => { if (root.isConnected) (rec.pos === 1 ? audio.fanfare() : audio.lap()); }, 300);
   return { el: root, autofocus: nextId ? next : retry, onBack: () => app.openGpSelect(diff, trackId) };
+}
+
+// ------------------------------------------------------------------ settings
+const pct = (v) => `${Math.round(v * 100)}%`;
+const KEYNAMES = { Space: 'Space', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Enter: 'Enter', Tab: 'Tab', ShiftLeft: 'Shift', ShiftRight: 'Shift', Backquote: '`', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'" };
+export const keyName = (code) => KEYNAMES[code] || code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ');
+
+/** A settings row: label + current value; left / right (or tapping the arrows) change it. */
+function settingRow(label, getText, change) {
+  const b = button(`<span class="lbl">${label}</span><span class="val"><i>◀</i><b></b><i>▶</i></span>`, (_, e) => {
+    const r = b.getBoundingClientRect();
+    const x = e && e.clientX ? (e.clientX - r.left) / r.width : 0.5; // keyboard confirm has no position
+    change(x < 0.5 ? -1 : 1);
+  }, 'setrow');
+  const val = b.querySelector('b');
+  const refresh = () => { val.textContent = getText(); };
+  b.adjust = (dir) => { change(dir); };
+  b.refresh = refresh;
+  refresh();
+  return b;
+}
+
+export function settingsScreen(app) {
+  const root = el('div', 'scr scr-settings');
+  const header = el('div', 'bar-top');
+  const back = button('<span class="chev">‹</span>', () => app.openMainMenu(), 'icon back');
+  header.append(back, el('h2', '', 'Settings'), el('div'));
+  root.appendChild(header);
+  const panel = el('div', 'panel list');
+  root.appendChild(panel);
+  const rows = [];
+  const step = (key, min, max, inc, after) => (dir) => {
+    const v = Math.round((settings[key] + dir * inc) * 100) / 100;
+    settings[key] = Math.max(min, Math.min(max, v));
+    save(); after?.(); rows.forEach((r) => r.refresh());
+  };
+  const cycle = (key, options, after) => (dir) => {
+    const i = options.indexOf(settings[key]);
+    settings[key] = options[(i + dir + options.length) % options.length];
+    save(); after?.(); rows.forEach((r) => r.refresh());
+  };
+  const add = (label, get, change) => { const r = settingRow(label, get, change); rows.push(r); panel.appendChild(r); return r; };
+  const touchRefresh = () => app.input.touch.refresh();
+
+  panel.appendChild(el('h4', '', 'Sound'));
+  add('Sound volume', () => pct(settings.sfxVolume), step('sfxVolume', 0, 1, 0.1, () => { app.audio.applySettings(); app.audio.click(); }));
+  add('Music volume', () => pct(settings.musicVolume), step('musicVolume', 0, 1, 0.1, () => app.audio.applySettings()));
+  panel.appendChild(el('h4', '', 'Touch controls'));
+  add('Layout', () => (settings.touchLayout === 'corners' ? 'Corner buttons' : 'Screen halves'), cycle('touchLayout', ['corners', 'halves'], touchRefresh));
+  add('Button size', () => pct(settings.buttonSize), step('buttonSize', 0.7, 1.4, 0.1, touchRefresh));
+  add('Button opacity', () => pct(settings.buttonOpacity), step('buttonOpacity', 0.2, 1, 0.1, touchRefresh));
+  add('Vibration', () => (settings.vibration ? 'On' : 'Off'), (d) => { settings.vibration = !settings.vibration; save(); rows.forEach((r) => r.refresh()); if (settings.vibration) navigator.vibrate?.(20); });
+  panel.appendChild(el('h4', '', 'Controller'));
+  add('Stick deadzone', () => pct(settings.deadzone), step('deadzone', 0, 0.4, 0.02));
+  add('Steering sensitivity', () => `${settings.sensitivity.toFixed(1)}x`, step('sensitivity', 0.5, 2, 0.1));
+  panel.appendChild(el('h4', '', 'Keyboard'));
+  const keys = button('<span class="lbl">Key bindings</span><span class="val"><b>›</b></span>', () => app.openKeys(), 'setrow');
+  panel.appendChild(keys);
+  panel.appendChild(el('h4', '', 'Graphics'));
+  add('Quality', () => ({ low: 'Low', medium: 'Medium', high: 'High' }[settings.quality]), cycle('quality', ['low', 'medium', 'high'], () => app.game.applyQuality()));
+  panel.appendChild(el('h4', '', 'Data'));
+  panel.appendChild(button('Reset progress', () => app.openConfirmReset(), 'setrow danger'));
+  return { el: root, autofocus: panel.querySelector('.fx'), onBack: () => app.openMainMenu() };
+}
+
+export function keysScreen(app) {
+  const root = el('div', 'scr scr-settings');
+  const header = el('div', 'bar-top');
+  const back = button('<span class="chev">‹</span>', () => app.openSettings(), 'icon back');
+  header.append(back, el('h2', '', 'Key bindings'), el('div'));
+  root.appendChild(header);
+  const panel = el('div', 'panel list');
+  root.appendChild(panel);
+  const say = note(root);
+  const RESERVED = ['Escape', 'Enter', 'NumpadEnter', 'Backspace', 'KeyP'];
+  const ACTIONS = [['left', 'Steer left'], ['right', 'Steer right'], ['brake', 'Brake']];
+  panel.appendChild(el('p', 'hintline', 'Pick a slot, then press the key you want. Esc, Enter, Backspace and P are reserved for menus.'));
+
+  function build() {
+    panel.querySelectorAll('.keyrow').forEach((r) => r.remove());
+    for (const [action, label] of ACTIONS) {
+      const row = el('div', 'keyrow');
+      row.appendChild(el('span', 'lbl', label));
+      for (let slot = 0; slot < 2; slot++) {
+        const code = settings.keys[action][slot];
+        const b = button(code ? keyName(code) : '—', () => rebind(action, slot, b), 'keybtn');
+        row.appendChild(b);
+      }
+      panel.appendChild(row);
+    }
+    // keep reset button last
+    panel.appendChild(reset);
+  }
+
+  function rebind(action, slot, btn) {
+    btn.textContent = 'Press a key…';
+    btn.classList.add('listening');
+    app.input.keyboard.captureNext((code) => {
+      if (RESERVED.includes(code)) { say(`${keyName(code)} is reserved for menus`); return build2(btn); }
+      // another action must keep at least one key
+      for (const other of Object.keys(settings.keys)) {
+        if (other === action) continue;
+        const arr = settings.keys[other];
+        if (arr.includes(code) && arr.length === 1) { say(`That is the only key for ${other}`); return build2(btn); }
+      }
+      for (const other of Object.keys(settings.keys)) settings.keys[other] = settings.keys[other].filter((k) => k !== code || other === action);
+      const mine = settings.keys[action];
+      const old = mine[slot];
+      if (slot < mine.length) mine[slot] = code; else mine.push(code);
+      if (old === code) mine.splice(slot, 1, code);
+      settings.keys[action] = [...new Set(mine)].slice(0, 2);
+      save();
+      audio.click();
+      build2(btn);
+    });
+  }
+  const build2 = () => { const idx = app.ui.list().indexOf(app.ui.focused); build(); const l = app.ui.list(); app.ui.refocus(l[Math.max(0, idx)] || l[0]); };
+
+  const reset = button('Reset to defaults', () => {
+    settings.keys = { left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], brake: ['Space', 'KeyS', 'ArrowDown'] };
+    save(); build2();
+  }, 'setrow');
+  build();
+  return { el: root, autofocus: panel.querySelector('.keybtn'), onBack: () => { app.input.keyboard.capture = null; app.openSettings(); } };
+}
+
+export function confirmReset(app) {
+  const root = el('div', 'scr scr-pause');
+  root.appendChild(el('h2', '', 'Reset progress?'));
+  root.appendChild(el('div', 'meta', 'This erases all stars, best times, Grand Prix results, ghosts, unlocks and garage choices.<br>Settings are kept.'));
+  const list = el('div', 'stack');
+  const no = button('No, keep my progress', () => app.openSettings(), 'primary');
+  const yes = button('Yes, erase everything', () => app.resetProgress(), 'danger');
+  list.append(no, yes);
+  root.appendChild(list);
+  return { el: root, autofocus: no, onBack: () => app.openSettings() };
+}
+
+// ------------------------------------------------------------------ garage
+export function garageScreen(app) {
+  const root = el('div', 'scr scr-garage');
+  const header = el('div', 'bar-top');
+  const back = button('<span class="chev">‹</span>', () => app.openMainMenu(), 'icon back');
+  header.append(back, el('h2', '', 'Garage'), el('div', 'total', `<span class="st on">★</span> ${career.totalStars()}`));
+  root.appendChild(header);
+  const sheet = el('div', 'sheet');
+  root.appendChild(sheet);
+  const say = note(root);
+
+  let viewId = garage.selectedCar().id;
+  const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+
+  function render(focusSel = null) {
+    const car = garage.carById(viewId);
+    const unlocked = garage.carUnlocked(car);
+    const chosen = garage.selectedCar().id === car.id;
+    sheet.innerHTML = '';
+    const tabs = el('div', 'tabs cars');
+    CARS.forEach((c) => {
+      const lock = !garage.carUnlocked(c);
+      const t = button(`${c.name}${lock ? LOCK : ''}`, () => { viewId = c.id; render('tab' + c.id); }, `tab${c.id === viewId ? ' sel' : ''}${lock ? ' locked' : ''}`);
+      t.dataset.sel = 'tab' + c.id;
+      tabs.appendChild(t);
+    });
+    sheet.appendChild(tabs);
+    sheet.appendChild(el('p', 'blurb', car.blurb));
+    const bars = garage.statBars(car);
+    const sb = el('div', 'bars');
+    for (const [k, v] of Object.entries(bars)) sb.appendChild(el('div', '', `<span>${k}</span><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div>`));
+    sheet.appendChild(sb);
+
+    const paints = el('div', 'paints');
+    const options = [{ id: 'default', name: 'Original', color: car.color }, ...REWARD_COLORS];
+    const cur = garage.selectedPaint();
+    options.forEach((p, i) => {
+      const ok = garage.paintUnlocked(p.id);
+      const b = button(ok ? '' : LOCK, () => { garage.setPaint(p.id); app.previewGarage(viewId); render('paint' + p.id); }, `swatch${cur === p.id ? ' on' : ''}${ok ? '' : ' disabled'}`);
+      b.style.background = hex(i === 0 ? car.color : p.color);
+      b.dataset.sel = 'paint' + p.id;
+      b.title = i === 0 ? 'Original' : p.name;
+      b.addEventListener('denied', () => say(`Win a Grand Prix on ${DIFFICULTIES[i - 1].name} to unlock ${p.name}`));
+      paints.appendChild(b);
+    });
+    sheet.appendChild(paints);
+
+    let action;
+    if (!unlocked) {
+      const have = Math.min(career.totalStars(), car.starsToUnlock);
+      sheet.appendChild(el('div', 'unlock', `<div class="bar"><i style="width:${(have / car.starsToUnlock) * 100}%"></i></div><p>${LOCK} ${have} / ${car.starsToUnlock} career stars to unlock</p>`));
+      action = button('Locked', null); action.classList.add('disabled');
+      action.addEventListener('denied', () => say(`Collect ${car.starsToUnlock} stars in Career to unlock ${car.name}`));
+    } else if (chosen) {
+      action = button('Selected ✓', null); action.classList.add('disabled');
+    } else {
+      action = button('Select', () => { garage.setCar(car.id); app.game.applyLoadout(); render('action'); }, 'primary');
+    }
+    action.dataset.sel = 'action';
+    sheet.appendChild(action);
+
+    app.previewGarage(viewId);
+    const target = focusSel ? sheet.querySelector(`[data-sel="${focusSel}"]`) : null;
+    if (root.isConnected) app.ui.refocus(target || action);
+  }
+  render();
+  return { el: root, autofocus: sheet.querySelector('[data-sel="action"]'), onBack: () => app.openMainMenu() };
 }

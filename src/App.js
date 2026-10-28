@@ -1,7 +1,10 @@
 // Game flow: menus <-> races. Owns the UI host and wires Game callbacks to screens + career rules.
 
 import { UI } from './ui/UI.js';
-import { mainMenu, levelSelect, preRace, results, pauseMenu, gpSelect, gpPreRace, gpResults } from './ui/screens.js';
+import { audio } from './audio/Audio.js';
+import { mainMenu, levelSelect, preRace, results, pauseMenu, gpSelect, gpPreRace, gpResults, settingsScreen, keysScreen, confirmReset, garageScreen } from './ui/screens.js';
+import * as garage from './game/garage.js';
+import { resetProgress } from './settings.js';
 import * as career from './game/career.js';
 import * as gp from './game/gp.js';
 import { DIFFICULTIES } from './data/difficulty.js';
@@ -12,6 +15,7 @@ export class App {
     this.game = game;
     this.input = input;
     this.ui = new UI(overlayRoot);
+    this.audio = audio;
     this.current = null;      // career level being raced (null = free drive / menus)
     this.lastChapter = 0;
     this.currentGp = null;    // { trackId, diff } while a Grand Prix race is on
@@ -38,6 +42,34 @@ export class App {
     this.current = null;
     if (this.game.mode !== 'demo') this.game.enterDemo(); // drops the race HUD
     this.ui.open(levelSelect(this, chapter, level));
+  }
+
+  openSettings() {
+    this.current = null; this.currentGp = null;
+    if (this.game.mode === 'garage') this.game.enterDemo();
+    this.ui.open(settingsScreen(this));
+    this.input.setTouchVisible(true); // preview of the touch buttons (dimmed behind the menu)
+  }
+
+  openKeys() { this.ui.open(keysScreen(this)); }
+  openConfirmReset() { this.ui.open(confirmReset(this)); }
+
+  resetProgress() {
+    resetProgress();
+    this.game.applyLoadout();
+    audio.fail();
+    this.openMainMenu();
+  }
+
+  openGarage() {
+    this.current = null; this.currentGp = null;
+    this.game.enterGarage();
+    this.ui.open(garageScreen(this));
+  }
+
+  previewGarage(carId) {
+    const car = garage.carById(carId);
+    this.game.previewCar(car, garage.paintColor(garage.selectedPaint(), car));
   }
 
   // ---------------------------------------------------------------- Grand Prix
@@ -101,15 +133,17 @@ export class App {
   }
 
   pause() {
-    if (this.game.pause()) this.ui.open(pauseMenu(this));
+    if (this.game.pause()) { audio.duck(true); this.ui.open(pauseMenu(this)); }
   }
 
   resume() {
+    audio.duck(false);
     this.ui.close();
     this.game.resume();
   }
 
   restartRace() {
+    audio.duck(false);
     this.ui.close();
     this.game.startRace(this.currentGp ? { difficulty: DIFFICULTIES[this.currentGp.diff] } : null);
   }

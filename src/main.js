@@ -2,6 +2,7 @@ import { Input } from './input/Input.js';
 import { Game } from './game/Game.js';
 import { App } from './App.js';
 import { settings } from './settings.js';
+import { audio } from './audio/Audio.js';
 import { levelById } from './game/career.js';
 import { showTrackPreview } from './ui/TrackPreview.js';
 
@@ -14,6 +15,7 @@ if (params.has('preview')) {
   if (params.has('layout')) settings.touchLayout = params.get('layout') === 'halves' ? 'halves' : 'corners';
 
   const input = new Input(document.getElementById('touch'));
+  input.onActivity(() => audio.unlock()); // browsers need a user gesture before audio can start
   let app;
   const game = new Game({
     canvas: document.getElementById('game'),

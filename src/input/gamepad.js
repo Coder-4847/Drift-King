@@ -38,6 +38,7 @@ export class Gamepad {
     // Device switch + controller kind
     const any = p.buttons.some((b) => b.pressed) || Math.abs(p.axes[0] || 0) > 0.5 || Math.abs(p.axes[1] || 0) > 0.5;
     if (any) {
+      this.input.emitActivity();
       this.input.setDevice('gamepad');
       const id = (p.id || '').toLowerCase();
       this.input.padKind = /playstation|dualshock|dualsense|054c/.test(id) ? 'playstation'

@@ -3,6 +3,8 @@
 // element in that direction, confirm clicks the focused one, back / pause call screen.onBack.
 // Mouse and touch just click.
 
+import { audio } from '../audio/Audio.js';
+
 const center = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
 
 export function el(tag, cls = '', html = '') {
@@ -19,7 +21,9 @@ export function button(label, onClick, cls = '') {
   b.tabIndex = -1;
   b.innerHTML = label;
   b.addEventListener('mousedown', (e) => e.preventDefault()); // never take real keyboard focus
-  b.addEventListener('click', () => { if (!b.classList.contains('disabled')) onClick?.(b); else b.dispatchEvent(new CustomEvent('denied')); });
+  b.addEventListener('click', (e) => {
+    if (!b.classList.contains('disabled')) { audio.click(); onClick?.(b, e); } else { audio.deny(); b.dispatchEvent(new CustomEvent('denied')); }
+  });
   return b;
 }
 
@@ -43,7 +47,7 @@ export class UI {
       if (t && t !== this.focused) this.setFocus(t);
     });
     const first = screen.autofocus || this.list()[0];
-    if (first) this.setFocus(first);
+    if (first) this.setFocus(first, true);
   }
 
   close() {
@@ -57,7 +61,9 @@ export class UI {
     return [...this.cur.el.querySelectorAll('.fx')].filter((e) => e.offsetParent !== null || e.getClientRects().length);
   }
 
-  setFocus(e) {
+  setFocus(e, quiet = false) {
+    if (this.focused === e) return;
+    if (!quiet) audio.focus();
     if (this.focused) this.focused.classList.remove('focus');
     this.focused = e;
     e.classList.add('focus');
@@ -68,13 +74,15 @@ export class UI {
   /** Re-focus after a screen re-rendered part of itself. */
   refocus(prefer) {
     const list = this.list();
-    this.setFocus(prefer && list.includes(prefer) ? prefer : list[0]);
+    this.setFocus(prefer && list.includes(prefer) ? prefer : list[0], true);
   }
 
   nav(action) {
     if (!this.cur) return false;
-    if (action === 'back' || action === 'pause') { this.cur.onBack?.(); return true; }
+    if (action === 'back' || action === 'pause') { audio.back(); this.cur.onBack?.(); return true; }
     if (action === 'confirm') { this.focused?.click(); return true; }
+    // rows with a value (settings) use left / right to change it instead of moving focus
+    if ((action === 'left' || action === 'right') && this.focused?.adjust) { this.focused.adjust(action === 'left' ? -1 : 1); return true; }
     const list = this.list();
     if (!list.length) return true;
     if (!this.focused || !list.includes(this.focused)) { this.setFocus(list[0]); return true; }

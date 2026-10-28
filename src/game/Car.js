@@ -17,6 +17,9 @@ export class Car {
     this.reset(0, 0, 0);
   }
 
+  /** Swap handling stats (garage). */
+  setStats(stats = {}) { this.stats = { ...CAR, ...stats }; }
+
   reset(x, z, heading, speed = 0) {
     this.x = x; this.z = z; this.heading = heading;
     this.vx = Math.sin(heading) * speed;

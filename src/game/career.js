@@ -5,6 +5,7 @@
 import { progress, save } from '../settings.js';
 import { LEVELS } from '../data/levels.js';
 import { CHAPTERS } from '../data/chapters.js';
+import { CARS } from '../data/cars.js';
 
 const byId = new Map(LEVELS.map((l) => [l.id, l]));
 export const levelsOf = (chapter) => LEVELS.filter((l) => l.chapter === chapter);
@@ -57,5 +58,6 @@ export function recordResult(lvl, time, driftScore) {
   const after = totalStars();
   // chapters that this result unlocked
   const unlocked = CHAPTERS.map((_, i) => i).filter((i) => starsNeeded(i) > before && starsNeeded(i) <= after);
-  return { stars, prevStars, prevBest, newBest, newStars: Math.max(0, stars - prevStars), unlockedChapters: unlocked };
+  const cars = CARS.filter((c) => c.starsToUnlock > before && c.starsToUnlock <= after);
+  return { stars, prevStars, prevBest, newBest, newStars: Math.max(0, stars - prevStars), unlockedChapters: unlocked, unlockedCars: cars };
 }

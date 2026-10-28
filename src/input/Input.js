@@ -14,6 +14,7 @@ export class Input {
     this.padKind = 'xbox'; // 'xbox' | 'playstation' | 'generic'
     this.navListeners = new Set();
     this.deviceListeners = new Set();
+    this.activityListeners = new Set();
 
     this.keyboard = new Keyboard(this);
     this.gamepad = new Gamepad(this);
@@ -24,6 +25,7 @@ export class Input {
 
     // Any real touch switches to touch controls, even on hybrid laptops.
     addEventListener('pointerdown', (e) => {
+      this.emitActivity();
       if (e.pointerType === 'touch') this.setDevice('touch');
       else if (e.pointerType === 'mouse') this.setDevice('keyboard');
     }, { capture: true });
@@ -36,6 +38,10 @@ export class Input {
   }
 
   onDevice(cb) { this.deviceListeners.add(cb); return () => this.deviceListeners.delete(cb); }
+  /** Fires on any key / pointer / gamepad press (used to unlock audio). */
+  onActivity(cb) { this.activityListeners.add(cb); }
+  emitActivity() { for (const cb of this.activityListeners) cb(); }
+
   onNav(cb) { this.navListeners.add(cb); return () => this.navListeners.delete(cb); }
   emitNav(action) { for (const cb of this.navListeners) cb(action); }
 

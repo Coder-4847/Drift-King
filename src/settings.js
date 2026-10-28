@@ -22,6 +22,7 @@ const DEFAULTS = {
   },
   progress: {
     hintsSeen: false,
+    garage: { car: 'ember', paint: 'default' },
     career: { stars: {}, best: {}, drift: {} },   // keyed by level id, e.g. "c3l5"
     gp: { best: {}, rewards: {} },                // best[trackId][difficultyId] = { pos, points, time }; rewards[difficultyId] = true
   },
@@ -51,9 +52,18 @@ export function save() {
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
 }
 
-export function resetAll() {
-  const fresh = clone(DEFAULTS);
-  merge(settings, fresh.settings);
-  merge(progress, fresh.progress);
+/** Erase all progress (stars, times, unlocks, garage, ghosts). Settings are kept. */
+export function resetProgress() {
+  const fresh = clone(DEFAULTS).progress;
+  for (const k of Object.keys(progress)) delete progress[k];
+  Object.assign(progress, fresh);
+  try { localStorage.removeItem('driftkings.ghosts.v1'); } catch { /* ignore */ }
+  save();
+}
+
+export function resetSettings() {
+  const fresh = clone(DEFAULTS).settings;
+  for (const k of Object.keys(settings)) delete settings[k];
+  Object.assign(settings, fresh);
   save();
 }

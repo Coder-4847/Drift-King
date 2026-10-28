@@ -11,6 +11,7 @@ export class Keyboard {
   constructor(input) {
     this.input = input;
     this.down = new Set();
+    this.capture = null; // when set, the next key press goes to this callback (key rebinding)
     addEventListener('keydown', (e) => this.onKey(e, true));
     addEventListener('keyup', (e) => this.onKey(e, false));
     addEventListener('blur', () => this.down.clear());
@@ -21,11 +22,20 @@ export class Keyboard {
   get right() { return this.held('right'); }
   get brake() { return this.held('brake'); }
 
+  /** Pass the next key press (event.code) to cb instead of the game. */
+  captureNext(cb) { this.capture = cb; }
+
   onKey(e, isDown) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (this.capture) {
+      e.preventDefault();
+      if (isDown && !e.repeat) { const cb = this.capture; this.capture = null; cb(e.code); }
+      return;
+    }
     const bound = ['left', 'right', 'brake'].some((a) => settings.keys[a].includes(e.code));
     if (bound || NAV[e.code]) e.preventDefault();
     if (isDown) {
+      this.input.emitActivity();
       this.input.setDevice('keyboard');
       if (!e.repeat) {
         this.down.add(e.code);
