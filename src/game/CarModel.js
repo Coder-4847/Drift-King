@@ -67,6 +67,16 @@ export class CarModel {
     }
   }
 
+  /** Make the whole car a see-through ghost. */
+  ghostify(opacity = 0.38) {
+    this.group.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = false;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    });
+  }
+
   /** Sync with the physics car. */
   update(car, steer) {
     const g = this.group;

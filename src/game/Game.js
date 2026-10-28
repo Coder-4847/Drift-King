@@ -25,6 +25,7 @@ import { GridRace } from './GridRace.js';
 import { Hud } from '../ui/Hud.js';
 import { fmtTime } from '../util/format.js';
 import { audio } from '../audio/Audio.js';
+import { GhostRecorder, loadGhost } from './ghost.js';
 
 const COUNTDOWN = 3.2;      // seconds of 3-2-1 before GO
 const FINISH_DELAY = 1.7;   // seconds of roll-out before the result screen
@@ -45,7 +46,9 @@ export class Game {
     this.onFinish = onFinish;
     this.quality = QUALITY[settings.quality] || QUALITY.high;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    // MSAA is wasted (and costly) on dense phone screens, where the pixel ratio already hides jaggies
+    const dense = Math.min(devicePixelRatio || 1, this.quality.pixelRatio) >= 1.75;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !dense, powerPreference: 'high-performance' });
     this.renderer.shadowMap.enabled = this.quality.shadows;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -55,6 +58,8 @@ export class Game {
     this.rig = new CameraRig(innerWidth / innerHeight);
     this.hud = new Hud(hudRoot, input, { debug, onPause: () => onPauseButton?.() });
 
+    this.dpr = Math.min(devicePixelRatio || 1, this.quality.pixelRatio); // lowered automatically if frames run slow
+    this.perf = { t: 0, frames: 0 };
     this.mode = 'demo';
     this.time = 0;       // simulation clock (stops while paused)
     this.acc = 0;
@@ -65,6 +70,7 @@ export class Game {
     this.trackId = null;
     this.grid = null;          // GridRace while a Grand Prix is running
     this.rivalModels = [];
+    this.ghost = null; this.ghostModel = null; this.recorder = null;
     this.smokeAcc = {};
     this.standingsTimer = 0;
 
@@ -137,6 +143,20 @@ export class Game {
     this.world.followShadow(this.car.x, this.car.z);
   }
 
+  /** Career only: replay of your best run (translucent car) + a recorder for this run. */
+  setupGhost(id) {
+    if (this.ghostModel) { this.scene.remove(this.ghostModel.group); this.ghostModel = null; }
+    this.ghost = id ? loadGhost(id) : null;
+    this.recorder = id ? new GhostRecorder() : null;
+    if (this.ghost) {
+      const lo = garageData.loadout();
+      this.ghostModel = new CarModel(0xbfdfff, 0xffffff); void lo;
+      this.ghostModel.ghostify();
+      this.scene.add(this.ghostModel.group);
+      this.ghostModel.group.visible = false;
+    }
+  }
+
   clearGrid() {
     for (const m of this.rivalModels) this.scene.remove(m.group);
     this.rivalModels = [];
@@ -162,6 +182,7 @@ export class Game {
 
   enterDemo() {
     this.clearGrid();
+    this.setupGhost(null);
     this.mode = 'demo';
     this.paused = false;
     this.bot.o.speedScale = 0.8;
@@ -181,7 +202,8 @@ export class Game {
   }
 
   /** Reset to the grid and run the 3-2-1 countdown, then the clock starts. */
-  startRace(gp = null) {
+  startRace(gp = null, ghostId = null) {
+    this.setupGhost(ghostId);
     if (gp) this.setupGrid(gp.difficulty); else this.clearGrid();
     this.placeAtStart();
     this.mode = 'countdown';
@@ -262,13 +284,14 @@ export class Game {
     this.renderer.render(g.scene, cam);
   }
 
-  pause() { if (!this.canPause()) return false; this.paused = true; this.updateTouch(); return true; }
-  resume() { this.paused = false; this.last = performance.now(); this.updateTouch(); }
+  pause() { if (!this.canPause()) return false; this.paused = true; this.hud.pauseHints(true); this.updateTouch(); return true; }
+  resume() { this.paused = false; this.hud.pauseHints(false); this.last = performance.now(); this.updateTouch(); }
 
   // ---------------------------------------------------------------- loop
   resize() {
     const w = innerWidth, h = innerHeight;
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, this.quality.pixelRatio));
+    this.dpr = Math.min(this.dpr, devicePixelRatio || 1, this.quality.pixelRatio);
+    this.renderer.setPixelRatio(this.dpr);
     this.renderer.setSize(w, h, false);
     this.rig.setAspect(w / h);
   }
@@ -287,6 +310,7 @@ export class Game {
     this.last = now;
     dt = Math.min(dt, 0.1);
     this.fps += (1 / Math.max(dt, 1e-3) - this.fps) * 0.05;
+    this.watchPerformance(dt);
 
     const inp = this.input.update(dt);
     if (this.mode === 'garage') { this.drawGarage(dt); return; }
@@ -301,6 +325,21 @@ export class Game {
       this.effects(dt);
     }
     this.draw(dt, inp);
+  }
+
+  /** Dynamic resolution: if the last second averaged under ~48 fps while racing, drop the render scale a step. */
+  watchPerformance(dt) {
+    const p = this.perf;
+    if (!this.racing || this.paused) { p.t = 0; p.frames = 0; return; }
+    p.t += Math.min(dt, 0.25); p.frames++;
+    if (p.t < 1.5) return;
+    const fps = p.frames / p.t;
+    p.t = 0; p.frames = 0;
+    if (fps < 48 && this.dpr > 0.75) {
+      this.dpr = Math.max(0.75, this.dpr - 0.25);
+      this.renderer.setPixelRatio(this.dpr);
+      this.renderer.setSize(innerWidth, innerHeight, false);
+    }
   }
 
   stepMode(dt) {
@@ -324,6 +363,7 @@ export class Game {
         this.onFinish?.({
           time: this.race.finishTime, lapTimes: this.race.lapTimes, driftScore: this.car.totalDriftScore + this.car.driftScore,
           standings: this.grid ? this.grid.finalResults() : null,
+          ghost: this.recorder ? this.recorder.pack() : null,
         });
       }
     }
@@ -365,7 +405,9 @@ export class Game {
     const car = this.car;
     if (this.mode === 'racing' || this.mode === 'finished') {
       this.hud.tick(dt);
-      this.hud.setBig(fmtTime(this.race.time));
+      if (this.mode === 'racing' && this.recorder) this.recorder.sample(this.race.time, car);
+      this.hudAcc = (this.hudAcc || 0) + dt;
+      if (this.hudAcc > 0.033) { this.hudAcc = 0; this.hud.setBig(fmtTime(this.race.time)); }
       this.hud.setLap(this.race.laps > 1 ? `LAP ${this.race.lapDisplay}/${this.race.laps}` : '');
       this.hud.setWrongWay(this.mode === 'racing' && this.race.wrongWay);
       this.hud.driftLive(this.mode === 'racing' && car.driftActive ? car.driftScore : 0);
@@ -386,7 +428,7 @@ export class Game {
   // Tyre marks + smoke from the rear wheels while the tail is loose.
   emitCar(car, id, dt, rate) {
     const sliding = car.gripBlend > 0.3 && Math.abs(car.slip) > 0.12 && car.speed > 6;
-    const w = { x: 0, z: 0 };
+    const w = this._w || (this._w = { x: 0, z: 0 });
     for (let k = 0; k < 2; k++) {
       if (sliding && car.onRoad) {
         car.wheelPos(k ? 1 : -1, w);
@@ -422,6 +464,12 @@ export class Game {
     this.steerShown += (steer - this.steerShown) * Math.min(1, 14 * dt);
     this.model.update(car, this.steerShown);
     if (this.grid) for (const e of this.grid.entries) if (e.model) e.model.update(e.car, e.driver.out.steer);
+    if (this.ghostModel) {
+      const live = this.mode === 'racing' || this.mode === 'countdown';
+      this.ghostModel.group.visible = live;
+      const st = live ? this.ghost.at(this.mode === 'racing' ? this.race.time : 0, this._gs || (this._gs = {})) : null;
+      if (st) { this.ghostModel.group.position.set(st.x, 0, st.z); this.ghostModel.group.rotation.y = st.heading; }
+    }
 
     if (!this.paused) {
       this.rig.update(car, dt);
@@ -435,7 +483,9 @@ export class Game {
     });
     this.smoke.update(this.time);
     this.skids.update(this.time);
-    if (this.mode !== 'demo') {
+    this.mapAcc = (this.mapAcc || 0) + dt;
+    if (this.mode !== 'demo' && this.mapAcc > 0.033) {
+      this.mapAcc = 0;
       const dots = this.grid
         ? this.grid.entries.map((e) => ({ x: e.car.x, z: e.car.z, big: e.isPlayer, color: e.isPlayer ? '#ff5a4a' : '#' + e.color.toString(16).padStart(6, '0') }))
         : [{ x: car.x, z: car.z, color: '#ff5a4a', big: true }];

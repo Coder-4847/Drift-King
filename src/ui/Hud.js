@@ -1,7 +1,8 @@
 // Minimal HUD: level title, big number (timer), drift pop-up, first-race control hints,
 // pause button. Plain DOM; updates only touch text that changed.
 
-import { progress, save } from '../settings.js';
+import { progress, save, settings } from '../settings.js';
+import { keyName } from '../util/format.js';
 import { Minimap } from './Minimap.js';
 
 export class Hud {
@@ -37,6 +38,7 @@ export class Hud {
     this.minimap = new Minimap(root);
     this.toastTimer = 0;
     this.cache = {};
+    input.onDevice(() => { if (this.hintTimer > 0) this.renderHint(); });
     this.popTimer = 0;
     this.hintTimer = 0;
   }
@@ -140,16 +142,23 @@ export class Hud {
   // Control hints, first race only; text follows the device currently in use.
   showHints() {
     if (progress.hintsSeen) return;
+    this.hintTimer = 9;
+    this.renderHint();
+    this.hint.classList.add('on');
+  }
+
+  renderHint() {
     const dev = this.input.device;
     const lines = {
       touch: 'The car speeds up by itself.<br>Use <b>◀ ▶</b> to steer. Hold the <b>BRAKE</b> while turning to drift.',
-      keyboard: 'The car speeds up by itself.<br><b>A / D</b> or <b>← →</b> to steer. Hold <b>Space</b> while turning to drift.',
+      keyboard: `The car speeds up by itself.<br><b>${keyName(settings.keys.left[0])} / ${keyName(settings.keys.right[0])}</b> or <b>← →</b> to steer. Hold <b>${keyName(settings.keys.brake[0])}</b> while turning to drift.`,
       gamepad: 'The car speeds up by itself.<br><b>Left stick</b> to steer. Hold <b>A / RT</b> while turning to drift.',
     };
     this.hint.innerHTML = lines[dev] || lines.keyboard;
-    this.hint.classList.add('on');
-    this.hintTimer = 9;
   }
+
+  /** Hide the control hint while the pause menu is open (its timer is frozen too). */
+  pauseHints(paused) { this.hint.classList.toggle('on', !paused && this.hintTimer > 0); }
 
   hideHints() { this.hint.classList.remove('on'); this.hintTimer = 0; }
 

@@ -3,7 +3,7 @@
 import { el, button } from './UI.js';
 import { audio } from '../audio/Audio.js';
 import { CHAPTERS } from '../data/chapters.js';
-import { fmtTime, fmtScore } from '../util/format.js';
+import { fmtTime, fmtScore, keyName } from '../util/format.js';
 import * as career from '../game/career.js';
 import * as gp from '../game/gp.js';
 import { DIFFICULTIES } from '../data/difficulty.js';
@@ -313,9 +313,6 @@ export function gpResults(app, r) {
 
 // ------------------------------------------------------------------ settings
 const pct = (v) => `${Math.round(v * 100)}%`;
-const KEYNAMES = { Space: 'Space', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Enter: 'Enter', Tab: 'Tab', ShiftLeft: 'Shift', ShiftRight: 'Shift', Backquote: '`', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'" };
-export const keyName = (code) => KEYNAMES[code] || code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ');
-
 /** A settings row: label + current value; left / right (or tapping the arrows) change it. */
 function settingRow(label, getText, change) {
   const b = button(`<span class="lbl">${label}</span><span class="val"><i>◀</i><b></b><i>▶</i></span>`, (_, e) => {

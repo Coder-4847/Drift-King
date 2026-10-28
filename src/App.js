@@ -9,6 +9,7 @@ import * as career from './game/career.js';
 import * as gp from './game/gp.js';
 import { DIFFICULTIES } from './data/difficulty.js';
 import { gpTracks } from './tracks/trackDefs.js';
+import { saveGhost } from './game/ghost.js';
 
 export class App {
   constructor({ game, input, overlayRoot }) {
@@ -105,7 +106,7 @@ export class App {
     this.current = lvl;
     this.game.loadTrack(lvl.track, { laps: lvl.laps });
     this.ui.close();
-    this.game.startRace();
+    this.game.startRace(null, id);
   }
 
   /** Debug: race any track id without career tracking. */
@@ -128,6 +129,7 @@ export class App {
     const lvl = this.current;
     if (!lvl) { this.game.hud.toast('Finished - open the pause menu to restart', 4); return; }
     const rec = career.recordResult(lvl, r.time, r.driftScore);
+    if (rec.newBest && r.ghost) saveGhost(lvl.id, r.time, r.ghost);
     this.game.hud.setVisible(false);
     this.ui.open(results(this, { lvl, time: r.time, driftScore: r.driftScore, rec, next: career.nextLevel(lvl) }));
   }
@@ -145,7 +147,7 @@ export class App {
   restartRace() {
     audio.duck(false);
     this.ui.close();
-    this.game.startRace(this.currentGp ? { difficulty: DIFFICULTIES[this.currentGp.diff] } : null);
+    this.game.startRace(this.currentGp ? { difficulty: DIFFICULTIES[this.currentGp.diff] } : null, this.current ? this.current.id : null);
   }
 
   quitRace() {

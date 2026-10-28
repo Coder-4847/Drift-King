@@ -3,8 +3,8 @@
 Top-down 3D drifting racer for the browser (Three.js + Vite, plain JavaScript, no external assets).
 Everything - meshes, particles, sounds - is generated in code. Progress is saved in `localStorage`.
 
-> **Status: Phase 4 (Grand Prix) done.** Phases 1-3 = foundation, track system, Career. Next: audio, garage,
-> settings UI, ghost, performance pass; then the GitHub Pages deploy.
+> **Status: Phase 5 (Polish) done.** Phases 1-4 = foundation, track system, Career, Grand Prix. Next: the
+> GitHub Pages deploy (Phase 6).
 
 ## Run it
 
@@ -18,7 +18,7 @@ npm run verify     # re-check all 110 tracks (geometry, bot lap, unique names)
 npm run levels     # (re)generate the star times in src/data/levels.js from bot reference times
 npm run aitune     # how fast is each AI difficulty vs the reference lap (compare with the `pace` column)
 npm run gpsim -- gp5 3   # headless 6-car race on a GP track at a difficulty (0-4)
-npm test           # career rules, lap/checkpoint/wrong-way, all 110 tracks, Grand Prix AI races
+npm test           # career rules, laps/checkpoints, all 110 tracks, Grand Prix AI races, ghost recording
 ```
 
 ### Debug URLs
@@ -29,7 +29,6 @@ npm test           # career rules, lap/checkpoint/wrong-way, all 110 tracks, Gra
 | `/?track=c3l5&at=0.4` | start 40% of the way round (handy to look at a corner or an ice patch) |
 | `/?preview` | minimap of all 110 tracks with stats and a live validity check; click a tile to drive it |
 | `&debug` | on-screen speed / slip / grip readout |
-| `?layout=halves` | try the alternative touch layout (screen halves steer, brake in the centre) until Settings exists |
 | `?track=c3l5` | skips the menus and starts that Career level |
 | `?track=gp4&diff=3` | skips the menus and starts a Grand Prix race (`diff` 0 Rookie ... 4 Legendary) |
 
@@ -46,8 +45,8 @@ A short brake tap before a corner kicks the tail out.
 
 The active device is detected automatically and can change at any time. Touch buttons are
 multi-touch (turn + brake together) and vibrate on press when supported.
-The touch layout (`corners` or `halves`) is `touchLayout` in `src/settings.js` until the Settings
-screen lands in Phase 5.
+Touch layout, button size / opacity, vibration, controller deadzone / sensitivity and the keyboard bindings
+are in **Settings**.
 
 ## Code layout
 
@@ -60,11 +59,13 @@ src/game/          Car physics (pure maths), GridRace (multi-car race, standings
 src/tracks/        Track (spline -> samples + queries), TrackBuilder (meshes), generator (seeded),
                    validate (geometry + bot lap), trackDefs (seed -> track definition)
 src/ai/            Driver (AI / bot, steer + brake only), line (racing line)
-src/ui/            HUD, minimap, UI host (focus navigation), screens (main menu, level select, pre-race, results, pause)
+src/audio/         Web Audio engine (engine / tyre / effects synths) + music sequencer (styles in src/data/music.js)
+src/ui/            HUD, minimap, UI host (focus navigation), screens (menus, level select, results, settings, garage ...)
 src/App.js         game flow: menus <-> races, career results
 src/data/          chapters (themes, props, name words), tracks (generated seeds), levels (star times),
                    difficulty (AI table, points, rivals), cars (+ paint rewards)
-tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTracks.js, racetest.js
+tools/             headless helpers: sim.js (handling), buildTracks.js / verifyTracks.js / buildLevels.js,
+                   aitune.js / gpsim.js (AI), and the test scripts run by `npm test`
 ```
 
 ## Track system (Phase 2)
@@ -98,8 +99,7 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
 
 * **Flow:** Main menu -> Career -> chapter tabs + 10-level grid -> pre-race card (name, laps, the three
   medal times, your best) -> 3-2-1-GO -> race -> result screen (time, best, animated stars, drift score,
-  Retry / Next / Menu). Pause has Resume / Restart / Quit. Grand Prix, Garage and Settings are greyed out
-  placeholders until their phases.
+  Retry / Next / Menu). Pause has Resume / Restart / Quit.
 * **Stars:** each level has `gold` (3 stars), `silver` (2 stars) and `bronze` (1 star) times in
   `src/data/levels.js`; the time is the whole run including all laps. They were generated from a bot's
   reference run (`npm run levels`): gold = bot x 1.16 on level 1 easing to x 1.04 on level 100, silver
@@ -111,7 +111,7 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
   `20 x (N - 1)` total stars (`starsToUnlock` in `src/data/chapters.js`); locked chapters show a
   "34 / 40 stars to unlock Chapter 3" progress bar. Rules + progress live in `src/game/career.js`.
 * **Saving:** `localStorage` key `driftkings.v1` (stars, best times, best drift scores per level, settings).
-  Clear it from the browser dev tools to reset until the Settings screen has a reset button.
+  Settings -> Reset progress erases it (settings are kept).
 * **Menus on every device:** one focus system (`src/ui/UI.js`): mouse / touch click, keyboard arrows + Enter /
   Backspace / Esc, controller D-pad or stick + A / B / Start. Menu prompts follow the last used device.
 
@@ -146,12 +146,41 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
 * The car now keeps 30% steering authority at a standstill (`steerMinFactor`) so nobody can get stuck nose-first
   against a wall (found by the AI tests).
 
+## Polish (Phase 5)
+
+* **Audio** (`src/audio`): everything is synthesised with Web Audio, no files. The audio context starts on the
+  first key / tap / controller press (browser autoplay rules). Engine tone that shifts through 5 "gears" with
+  speed, tyre squeal while sliding, countdown beeps + GO, boost whoosh, wall thud, bump, lap ping, star jingle
+  (timed to the star animation), fanfare for a new best / victory, menu click / focus / back / denied sounds.
+  **Music:** one generated loop per chapter (`src/data/music.js`: tempo, scale, chord loop, layers such as
+  arpeggio, bass, pad, lead, bells, drums), played by a look-ahead sequencer. Menus play the chapter of the
+  background track. Music is ducked (muffled) in pause. Both volumes are in Settings (music 0 = off).
+  The `vol` per style is a loudness trim measured with an offline render (all chapters ~equal level).
+* **Settings:** sound / music volume, touch layout (corner buttons or screen halves), button size, opacity,
+  vibration, controller deadzone and steering sensitivity, key rebinding (two keys per action; Esc / Enter /
+  Backspace / P are reserved for menus), graphics quality (low / medium / high: shadows, shadow map size,
+  particle caps, prop density, render scale) and Reset progress (with a confirmation). While Settings is open on
+  a touch device the buttons are shown dimmed behind the menu so you can see size / opacity changes.
+* **Garage:** a 3D turntable. **4 cars** (stats only, `src/data/cars.js`): Ember (balanced, free), Breeze (nimble,
+  25 stars), Bruiser (heavy, fast, 70 stars), Phantom (loose tail, big boosts, 130 stars), unlocked with total
+  career stars. **Paints:** each car's own colour plus the 5 Grand Prix reward colours. Star times and AI are
+  tuned for the Ember: other cars change how the stars feel (Bruiser's top speed helps on straights, Breeze helps
+  in twisty tracks).
+* **Ghost:** in Career, your best run is replayed as a translucent car next to you (10 Hz samples, ~5 KB, stored
+  under its own `localStorage` key `driftkings.ghosts.v1`). Saved when you set a new best time.
+* **Performance pass:** instanced props, ~40 draw calls, 120 Hz fixed-step physics costing well under 1 ms per
+  frame even with 6 cars, no per-frame allocations in the hot paths, throttled HUD text / minimap updates, MSAA
+  off on dense (pixel ratio >= 1.75) screens, and **dynamic resolution**: if a race averages under ~48 fps the
+  render scale is reduced in 0.25 steps (down to 0.75). I could not measure on real phone hardware - please check.
+* Small fixes: the control hint hides while paused, follows the active device and shows your rebound keys.
+
 ## Tuning
 
 * **Handling:** `CAR` in `src/config.js` (max speed, accel, grip, drift grip, brake strength, steering
   speed, boost). Per-car overrides go in `src/data/cars.js`. `npm run sim` prints speed / slip angle for
   scripted inputs so you can see the effect of a change without playing.
-* **Camera:** `CAMERA` in `src/config.js`. **Quality presets:** `QUALITY`.
+* **Camera:** `CAMERA` in `src/config.js`. **Quality presets:** `QUALITY`. **Cars:** `src/data/cars.js`.
+* **Music / sounds:** `src/data/music.js` (styles), `src/audio/Audio.js` (synth voices and effects).
 
 ## Decisions / assumptions (ambiguities resolved the simple way)
 
