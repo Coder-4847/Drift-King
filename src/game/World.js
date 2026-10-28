@@ -1,75 +1,25 @@
-// Lighting, ground, fog and scattered props (trees, rocks, poles) for a track.
-// Props are instanced + merged so the whole scene stays a few dozen draw calls.
+// Lighting, ground, fog and themed props for a track. Props are instanced (one draw call per
+// kind per layer) so the scene stays a few dozen draw calls.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { COLORS, QUALITY } from '../config.js';
-
-export function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function paintGeo(geo, hex) {
-  const c = new THREE.Color(hex);
-  const n = geo.attributes.position.count;
-  const arr = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return geo.index ? geo.toNonIndexed() : geo;
-}
-
-function pineGeometry() {
-  const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.28, 0.4, 1.8, 5); trunk.translate(0, 0.9, 0);
-  parts.push(paintGeo(trunk, 0x6b4a2e));
-  const tiers = [[2.5, 2.6, 1.7], [1.95, 2.4, 3.3], [1.35, 2.2, 4.7]];
-  for (const [r, h, y] of tiers) {
-    const cone = new THREE.ConeGeometry(r, h, 7); cone.translate(0, y, 0);
-    parts.push(paintGeo(cone, 0x2f6b3a));
-  }
-  return mergeGeometries(parts);
-}
-
-function rockGeometry() {
-  const g = new THREE.IcosahedronGeometry(1, 0);
-  const p = g.attributes.position;
-  const jitter = new Map(); // same corner -> same offset, so faces stay joined
-  const rnd = mulberry32(7);
-  for (let i = 0; i < p.count; i++) {
-    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    if (!jitter.has(key)) jitter.set(key, [0.8 + rnd() * 0.4, 0.55 + rnd() * 0.25, 0.8 + rnd() * 0.4]);
-    const j = jitter.get(key);
-    p.setXYZ(i, p.getX(i) * j[0], p.getY(i) * j[1], p.getZ(i) * j[2]);
-  }
-  g.translate(0, 0.35, 0);
-  return paintGeo(g, 0x8b8a84);
-}
-
-function poleGeometry() {
-  const parts = [];
-  const pole = new THREE.CylinderGeometry(0.14, 0.18, 7.5, 5); pole.translate(0, 3.75, 0);
-  parts.push(paintGeo(pole, 0x5a4634));
-  const bar = new THREE.BoxGeometry(2.4, 0.18, 0.18); bar.translate(0, 6.9, 0);
-  parts.push(paintGeo(bar, 0x5a4634));
-  return mergeGeometries(parts);
-}
+import { QUALITY } from '../config.js';
+import { mulberry32 } from '../rng.js';
+import { PROPS } from './props.js';
 
 export class World {
-  constructor(scene, track, theme, quality) {
+  /** theme: chapter.theme; propList: chapter.props; density: extra multiplier from the track. */
+  constructor(scene, track, theme, propList, quality, density = 1) {
     this.scene = scene;
     this.track = track;
     this.q = QUALITY[quality] || QUALITY.high;
-    this.theme = {
-      ground: 0x7d8f45, patchA: 0x6f8240, patchB: 0x8da04f, sky: 0xe9d9b8, ...theme,
-    };
+    this.theme = theme;
+    this.propList = propList;
+    this.density = density * this.q.props;
+    this.exposure = theme.exposure ?? 1.05;
+    this.keepOut = []; // circles (water / lava) that props avoid
 
-    scene.background = new THREE.Color(this.theme.sky);
-    scene.fog = new THREE.Fog(COLORS.haze, 110, 260);
+    scene.background = new THREE.Color(theme.sky);
+    scene.fog = new THREE.Fog(theme.haze, theme.fogNear ?? 110, theme.fogFar ?? 260);
 
     this.buildLights();
     this.buildGround();
@@ -77,9 +27,9 @@ export class World {
   }
 
   buildLights() {
-    const scene = this.scene;
-    scene.add(new THREE.HemisphereLight(COLORS.skyLight, COLORS.groundLight, 1.05));
-    const sun = new THREE.DirectionalLight(COLORS.sun, 2.3);
+    const th = this.theme, scene = this.scene;
+    scene.add(new THREE.HemisphereLight(th.hemiSky, th.hemiGround, th.hemiI));
+    const sun = new THREE.DirectionalLight(th.sun, th.sunI);
     this.sunOffset = new THREE.Vector3(-46, 30, -30); // low sun = long shadows
     sun.castShadow = this.q.shadows;
     const cam = sun.shadow.camera;
@@ -110,91 +60,145 @@ export class World {
   }
 
   buildGround() {
+    const th = this.theme, t = this.track;
     const geo = new THREE.PlaneGeometry(3000, 3000);
     geo.rotateX(-Math.PI / 2);
-    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: this.theme.ground }));
+    const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: th.ground }));
     ground.receiveShadow = true;
     this.scene.add(ground);
-    this.ground = ground;
 
-    // Flat colour patches break up the ground without textures.
-    const t = this.track;
     const rnd = mulberry32(31);
-    const patch = new THREE.CircleGeometry(1, 7); patch.rotateX(-Math.PI / 2);
-    const count = Math.round(70 * this.q.props);
-    const mesh = new THREE.InstancedMesh(patch, new THREE.MeshLambertMaterial({ color: 0xffffff }), count);
-    mesh.receiveShadow = true;
+    // flat colour patches (low-poly stand-in for texture)
+    this.patches(rnd, Math.round(70 * this.q.props), [th.patchA, th.patchB], { minOff: 2, span: 70, r0: 6, r1: 22, y: 0.012, lambert: true });
+    // water (harbor, coast) and lava (ash) pools further out
+    if (th.water) this.patches(rnd, Math.round(26 * this.q.props), [th.water], { minOff: 12, span: 90, r0: 22, r1: 60, y: 0.02, lambert: true, keepOut: true });
+    if (th.glow) this.patches(rnd, Math.round(34 * this.q.props), [th.glow], { minOff: 5, span: 80, r0: 6, r1: 18, y: 0.02, lambert: false, keepOut: true });
+  }
+
+  patches(rnd, count, colors, { minOff, span, r0, r1, y, lambert, keepOut = false }) {
+    const t = this.track;
+    if (!count) return;
+    const geo = new THREE.CircleGeometry(1, 8); geo.rotateX(-Math.PI / 2);
+    const mat = lambert ? new THREE.MeshLambertMaterial({ color: 0xffffff }) : new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const spots = [];
+    let guard = count * 15;
+    const tmp = {};
+    while (spots.length < count && guard-- > 0) {
+      const i = Math.floor(rnd() * t.n), side = rnd() < 0.5 ? -1 : 1;
+      const r = r0 + rnd() * (r1 - r0);
+      const off = t.wallOffset + minOff + r * (keepOut ? 0.9 : 0) + rnd() * span;
+      const x = t.x[i] + t.nx[i] * off * side, z = t.z[i] + t.nz[i] * off * side;
+      tmp.valid = false; t.query(x, z, tmp);
+      if (keepOut && tmp.dist < t.wallOffset + minOff + r * 0.9) continue;
+      spots.push({ x, z, r });
+    }
+    const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
+    mesh.receiveShadow = lambert;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
-    for (let k = 0; k < count; k++) {
-      const i = Math.floor(rnd() * t.n), side = rnd() < 0.5 ? -1 : 1;
-      const off = t.wallOffset + 2 + rnd() * 70;
-      const r = 6 + rnd() * 16;
-      p.set(t.x[i] + t.nx[i] * off * side, 0.012 + rnd() * 0.01, t.z[i] + t.nz[i] * off * side);
+    spots.forEach((sp, k) => {
+      p.set(sp.x, y + rnd() * 0.01, sp.z);
       q.setFromAxisAngle(up, rnd() * 6.28);
-      s.set(r, 1, r * (0.6 + rnd() * 0.5));
+      s.set(sp.r, 1, sp.r * (0.6 + rnd() * 0.5));
       m4.compose(p, q, s);
       mesh.setMatrixAt(k, m4);
-      mesh.setColorAt(k, c.set(rnd() < 0.5 ? this.theme.patchA : this.theme.patchB));
-    }
+      mesh.setColorAt(k, c.set(colors[Math.floor(rnd() * colors.length)]));
+      if (keepOut) this.keepOut.push({ x: sp.x, z: sp.z, r: sp.r * 1.15 });
+    });
     this.scene.add(mesh);
   }
 
-  /** Random spots outside the walls, kept away from every part of the track. */
-  scatter(rnd, count, minOff, maxOff) {
+  inKeepOut(x, z) {
+    for (const k of this.keepOut) if ((x - k.x) ** 2 + (z - k.z) ** 2 < k.r * k.r) return true;
+    return false;
+  }
+
+  /** Spots outside the walls, away from every part of the track. */
+  scatter(rnd, count, near, far, spacing = 0) {
     const t = this.track, out = [], tmp = {};
-    let guard = count * 12;
+    const minOff = t.wallOffset + near;
+    let guard = count * 14;
     while (out.length < count && guard-- > 0) {
       const i = Math.floor(rnd() * t.n), side = rnd() < 0.5 ? -1 : 1;
-      const off = minOff + Math.pow(rnd(), 1.6) * (maxOff - minOff);
+      const off = minOff + Math.pow(rnd(), 1.5) * (far - near);
       const x = t.x[i] + t.nx[i] * off * side + (rnd() - 0.5) * 8;
       const z = t.z[i] + t.nz[i] * off * side + (rnd() - 0.5) * 8;
-      tmp.valid = false;
-      t.query(x, z, tmp);
+      tmp.valid = false; t.query(x, z, tmp);
       if (tmp.dist < minOff) continue;
-      out.push([x, z]);
+      if (this.inKeepOut(x, z)) continue;
+      if (spacing && out.some((o) => (o[0] - x) ** 2 + (o[1] - z) ** 2 < spacing * spacing)) continue;
+      out.push([x, z, t.headingAt(tmp.idx)]);
     }
     return out;
   }
 
-  instanced(geo, spots, { scale = [1, 1], tint = [0xffffff], shadow = true } = {}) {
-    if (!spots.length) return;
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), spots.length);
+  /** Evenly spaced along the road, alternating sides, just outside the wall. */
+  lineUp(every, rnd) {
+    const t = this.track, out = [];
+    const step = Math.max(2, Math.round(every / (t.length / t.n)));
+    let k = 0;
+    for (let i = Math.floor(rnd() * step); i < t.n; i += step, k++) {
+      const side = k % 2 ? -1 : 1;
+      const off = (t.wallOffset + 2.4) * side;
+      const x = t.x[i] + t.nx[i] * off, z = t.z[i] + t.nz[i] * off;
+      if (this.inKeepOut(x, z)) continue;
+      out.push([x, z, t.headingAt(i) + (side < 0 ? Math.PI : 0)]);
+    }
+    return out;
+  }
+
+  addInstances(geo, material, spots, { scale, tint, shadow, rnd, randomRot }) {
+    const mesh = new THREE.InstancedMesh(geo, material, spots.length);
     mesh.castShadow = shadow;
-    mesh.receiveShadow = true;
-    const rnd = mulberry32(spots.length * 13 + 5);
+    mesh.receiveShadow = shadow;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
-    spots.forEach(([x, z, rot], k) => {
-      const sc = scale[0] + rnd() * (scale[1] - scale[0]);
-      p.set(x, 0, z);
-      q.setFromAxisAngle(up, rot ?? rnd() * 6.28);
-      s.set(sc, sc * (0.9 + rnd() * 0.3), sc);
+    spots.forEach((sp, k) => {
+      const sc = scale[0] + sp.u * (scale[1] - scale[0]);
+      p.set(sp.x, 0, sp.z);
+      q.setFromAxisAngle(up, sp.rot);
+      s.set(sc, sc * sp.vy, sc);
       m4.compose(p, q, s);
       mesh.setMatrixAt(k, m4);
-      c.set(tint[Math.floor(rnd() * tint.length)]);
-      mesh.setColorAt(k, c);
+      mesh.setColorAt(k, c.set(tint[sp.tint % tint.length]));
     });
     mesh.frustumCulled = false;
     this.scene.add(mesh);
   }
 
   buildProps() {
-    const t = this.track, k = this.q.props;
-    const rnd = mulberry32(1234);
-    const minOff = t.wallOffset + 3;
-
-    this.instanced(pineGeometry(), this.scatter(rnd, Math.round(520 * k), minOff, minOff + 62),
-      { scale: [0.8, 1.5], tint: [0xffffff, 0xe8f2dc, 0xd6e6c4, 0xf2f7e8] });
-    this.instanced(rockGeometry(), this.scatter(rnd, Math.round(110 * k), t.wallOffset + 1.5, minOff + 50),
-      { scale: [0.7, 2.2], tint: [0xffffff, 0xdad6cf, 0xbfbab0] });
-
-    // utility poles along one side, every ~45 m
-    const poles = [];
-    const step = Math.round(45 / (t.length / t.n));
-    for (let i = 0; i < t.n; i += step) {
-      poles.push([t.x[i] - t.nx[i] * (t.wallOffset + 2.5), t.z[i] - t.nz[i] * (t.wallOffset + 2.5), t.headingAt(i)]);
+    const rnd = mulberry32(1234 + this.track.n);
+    for (const spec of this.propList) {
+      const build = PROPS[spec.kind];
+      if (!build) continue;
+      let raw;
+      if (spec.every) raw = this.lineUp(spec.every, rnd);
+      else {
+        const n = Math.round(spec.count * this.density);
+        const near = spec.near ?? 2;
+        raw = this.scatter(rnd, n, near, spec.far ?? 60, spec.spacing || 0);
+      }
+      if (!raw.length) continue;
+      const spots = raw.map(([x, z, h]) => ({
+        x, z, u: rnd(), vy: 0.9 + rnd() * 0.3, tint: Math.floor(rnd() * 1000),
+        rot: spec.align === 'track' ? h + (rnd() < 0.5 ? 0 : Math.PI) : (spec.every ? h : rnd() * 6.28),
+      }));
+      const { lit, glow, pool } = build(spec.opts || {});
+      const tint = spec.tint || [0xffffff];
+      const scale = spec.scale || [1, 1];
+      this.addInstances(lit, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), spots,
+        { scale, tint, shadow: true, rnd });
+      if (glow) {
+        this.addInstances(glow, new THREE.MeshBasicMaterial({ vertexColors: true }), spots,
+          { scale, tint: [0xffffff], shadow: false, rnd });
+      }
+      if (pool) {
+        // soft additive light pool on the ground next to each lamp
+        const g = new THREE.CircleGeometry(pool.radius, 14);
+        g.rotateX(-Math.PI / 2); g.translate(pool.x, 0.07, 0);
+        const mat = new THREE.MeshBasicMaterial({ color: pool.color, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false });
+        this.addInstances(g, mat, spots.map((sp) => ({ ...sp, vy: 1 })), { scale: [1, 1], tint: [0xffffff], shadow: false, rnd });
+      }
     }
-    this.instanced(poleGeometry(), poles, { scale: [1, 1] });
   }
 }

@@ -21,9 +21,11 @@ export class TrackBuilder {
       asphalt: COLORS.asphalt, edge: COLORS.edgeLine, curbA: COLORS.curbRed, curbB: COLORS.curbWhite,
       wallA: 0xd8d2c2, wallB: 0xb9b3a4, chevron: COLORS.chevron, ...theme,
     };
+    this.theme.edge = theme.edge ?? COLORS.edgeLine;
     this.group = new THREE.Group();
     this.buildRoad();
     this.buildCurbs();
+    this.buildIce();
     this.buildStartLine();
     this.buildWalls();
     this.buildChevrons();
@@ -89,6 +91,21 @@ export class TrackBuilder {
         Math.floor(i / 2) % 2 ? A : B);
     }
     if (g.pos.length) this.addMesh(g.build());
+  }
+
+  // Translucent pale patches over the road where grip is low.
+  buildIce() {
+    const t = this.track, hw = t.halfWidth;
+    const g = new GeoBuilder();
+    const c = col(0xffffff);
+    const { count, j } = this.segments();
+    for (let i = 0; i < count; i++) {
+      if (t.grip[i] >= 1 || t.grip[j(i)] >= 1) continue;
+      g.quad(this.pt(i, -hw, 0.052), this.pt(i, hw, 0.052), this.pt(j(i), hw, 0.052), this.pt(j(i), -hw, 0.052), c);
+    }
+    if (!g.pos.length) return;
+    const mat = new THREE.MeshBasicMaterial({ color: 0xd2f1ff, transparent: true, opacity: 0.62, depthWrite: false });
+    this.addMesh(g.build(), { material: mat, receive: false });
   }
 
   buildStartLine() {

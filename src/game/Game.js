@@ -11,6 +11,9 @@ import { CameraRig } from './CameraRig.js';
 import { Smoke, SkidMarks } from './Particles.js';
 import { World } from './World.js';
 import { Track } from '../tracks/Track.js';
+import { getTrackDef } from '../tracks/trackDefs.js';
+import { CHAPTERS } from '../data/chapters.js';
+import { Race } from './Race.js';
 import { TrackBuilder } from '../tracks/TrackBuilder.js';
 import { Hud } from '../ui/Hud.js';
 import { Menu } from '../ui/Menu.js';
@@ -37,7 +40,6 @@ export class Game {
     this.menu = new Menu(overlayRoot, input);
 
     this.time = 0;       // simulation clock (stops while paused)
-    this.raceTime = 0;
     this.acc = 0;
     this.paused = false;
     this.fps = 60;
@@ -53,36 +55,41 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- setup
-  loadTrack(def) {
-    // clear previous
+  loadTrack(id) {
+    const def = getTrackDef(id);
+    const chapter = CHAPTERS[def.chapter];
+    this.def = def;
     this.scene = new THREE.Scene();
     this.track = new Track(def);
-    this.world = new World(this.scene, this.track, {}, settings.quality);
-    this.builder = new TrackBuilder(this.track);
+    this.world = new World(this.scene, this.track, chapter.theme, chapter.props, settings.quality, def.propDensity ?? 1);
+    this.renderer.toneMappingExposure = this.world.exposure;
+    this.builder = new TrackBuilder(this.track, chapter.theme);
     this.scene.add(this.builder.group);
+    this.race = new Race(this.track, def.laps);
 
     this.smoke = new Smoke(this.quality.smoke);
     this.skids = new SkidMarks(this.quality.skids);
     this.scene.add(this.skids.mesh, this.smoke.mesh);
 
-    const def0 = CARS[0];
-    this.car = new Car(def0.stats);
-    this.model = new CarModel(def0.color, def0.accent);
+    const car = CARS[0];
+    this.car = new Car(car.stats);
+    this.model = new CarModel(car.color, car.accent);
     this.scene.add(this.model.group);
 
     this.hud.setTitle(this.track.name);
+    this.hud.minimap.setTrack(this.track);
     this.restart();
   }
 
   restart() {
     const t = this.track;
-    const i = t.wrap(-3); // a few metres behind the line
-    this.car.reset(t.x[i], t.z[i], t.headingAt(i), 0);
+    const i = t.wrap(this.debugStart != null ? Math.floor(this.debugStart * t.n) : -3); // behind the line (debug: ?at=0.3)
+    this.car.reset(t.x[i], t.z[i], t.headingAt(i), this.debugStart != null ? 18 : 0);
     this.car.q = {};
+    this.race.reset(this.car);
     this.skids.clear();
     this.smoke.clear();
     this.time = 0;
-    this.raceTime = 0;
     this.acc = 0;
     this.smokeAcc = 0;
     this.steerShown = 0;
@@ -148,7 +155,6 @@ export class Game {
         this.acc -= PHYSICS_DT;
         this.simStep(inp);
       }
-      this.raceTime += dt;
       this.time += dt;
       this.effects(dt, inp);
     }
@@ -158,6 +164,10 @@ export class Game {
   simStep(inp) {
     const car = this.car;
     car.step(inp, PHYSICS_DT, this.track);
+    for (const e of this.race.update(car, PHYSICS_DT)) {
+      if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${e.lapTime.toFixed(2)}`);
+      else if (e.type === 'finish') this.hud.toast(`FINISH   ${e.time.toFixed(2)}`, 4);
+    }
     for (const e of car.events) {
       if (e.type === 'boost') this.pendingBoost = e.tier;
       else if (e.type === 'driftEnd') this.hud.driftEnded(e.score, this.pendingBoost ?? -1), (this.pendingBoost = undefined);
@@ -167,7 +177,9 @@ export class Game {
   effects(dt, inp) {
     const car = this.car;
     this.hud.tick(dt);
-    this.hud.setBig(fmtTime(this.raceTime));
+    this.hud.setBig(fmtTime(this.race.time));
+    this.hud.setLap(this.race.laps > 1 ? `LAP ${this.race.lapDisplay}/${this.race.laps}` : '');
+    this.hud.setWrongWay(this.race.wrongWay);
     this.hud.driftLive(car.driftActive ? car.driftScore : 0);
     if (car.driftActive || car.drifting) this.hud.hideHints();
 
@@ -210,6 +222,7 @@ export class Game {
     }
     this.smoke.update(this.time);
     this.skids.update(this.time);
+    this.hud.minimap.draw([{ x: car.x, z: car.z, color: '#ff5a4a', big: true }]);
 
     if (this.debug) {
       this.hud.debug(

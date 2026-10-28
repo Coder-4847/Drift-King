@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 
 export const SAMPLE_SPACING = 2; // metres between centreline samples
+export const ICE_GRIP = 0.4;     // grip multiplier on ice patches
 
 export class Track {
   /** def: { name, points:[[x,z],...], width, closed?, laps?, ... } */
@@ -12,7 +13,7 @@ export class Track {
     this.name = def.name;
     this.width = def.width;
     this.halfWidth = def.width / 2;
-    this.shoulder = def.shoulder ?? 9;                 // grass between road edge and wall
+    this.shoulder = def.shoulder ?? 7;                 // grass between road edge and wall
     this.wallOffset = this.halfWidth + this.shoulder;
     this.offRoadOffset = this.halfWidth + 1.2;         // curbs count as road
     this.closed = def.closed !== false;
@@ -46,6 +47,12 @@ export class Track {
       this.s[i + 1] = this.s[i] + Math.hypot(this.x[j] - this.x[i], this.z[j] - this.z[i]);
     }
     this.length = this.s[n];
+
+    // Surface grip multiplier per sample (ice zones from def.iceZones = [[s0, s1], ...]).
+    this.grip = new Float32Array(n).fill(1);
+    for (const [a, b] of def.iceZones || []) {
+      for (let i = 0; i < n; i++) if (this.s[i] >= a && this.s[i] <= b) this.grip[i] = ICE_GRIP;
+    }
 
     // Signed curvature (1/m): positive = right turn. Smoothed over +-3 samples.
     this.curv = new Float32Array(n);
@@ -112,6 +119,7 @@ export class Track {
     out.nx = nx; out.nz = nz;       // right normal at the nearest point
     out.lat = lat; out.dist = Math.abs(lat);
     out.onRoad = out.dist <= this.offRoadOffset;
+    out.grip = this.grip[bi];
     out.s = this.s[bi] + (this.s[j === 0 && bi === n - 1 ? n : j] - this.s[bi]) * bt;
     return out;
   }

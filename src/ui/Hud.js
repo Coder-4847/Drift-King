@@ -2,12 +2,15 @@
 // pause button. Plain DOM; updates only touch text that changed.
 
 import { progress, save } from '../settings.js';
+import { Minimap } from './Minimap.js';
 
 export class Hud {
   constructor(root, input, { debug = false, onPause } = {}) {
     this.input = input;
     root.innerHTML = `
-      <div class="hud-top"><div class="hud-title"></div><div class="hud-big">0.00</div></div>
+      <div class="hud-top"><div class="hud-title"></div><div class="hud-big">0.00</div><div class="hud-lap"></div></div>
+      <div class="wrongway">WRONG WAY</div>
+      <div class="toast"></div>
       <div class="drift-pop"><span></span><small></small></div>
       <div class="hint"></div>
       <button class="hud-pause" type="button" aria-label="Pause"><i></i></button>
@@ -21,12 +24,31 @@ export class Hud {
     this.debugEl = root.querySelector('.debug');
     root.querySelector('.hud-pause').addEventListener('click', () => onPause?.());
     root.querySelector('.hud-pause').addEventListener('mousedown', (e) => e.preventDefault());
+    this.lap = root.querySelector('.hud-lap');
+    this.wrong = root.querySelector('.wrongway');
+    this.toastEl = root.querySelector('.toast');
+    this.minimap = new Minimap(root);
+    this.toastTimer = 0;
     this.cache = {};
     this.popTimer = 0;
     this.hintTimer = 0;
   }
 
   setTitle(t) { this.title.textContent = t; }
+
+  setLap(text) {
+    if (this.cache.lap !== text) { this.cache.lap = text; this.lap.textContent = text; }
+  }
+
+  setWrongWay(on) {
+    if (this.cache.wrong !== on) { this.cache.wrong = on; this.wrong.classList.toggle('on', on); }
+  }
+
+  toast(text, seconds = 1.6) {
+    this.toastEl.textContent = text;
+    this.toastEl.classList.add('on');
+    this.toastTimer = seconds;
+  }
 
   setBig(text) {
     if (this.cache.big !== text) { this.cache.big = text; this.big.textContent = text; }
@@ -55,6 +77,10 @@ export class Hud {
   }
 
   tick(dt) {
+    if (this.toastTimer > 0) {
+      this.toastTimer -= dt;
+      if (this.toastTimer <= 0) this.toastEl.classList.remove('on');
+    }
     if (this.popTimer > 0) {
       this.popTimer -= dt;
       if (this.popTimer <= 0) this.pop.classList.remove('on');

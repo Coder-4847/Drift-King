@@ -112,7 +112,7 @@ export class Car {
 
     // --- sideways grip --------------------------------------------------------------------
     const slip = Math.atan2(vL, Math.max(vF, 0.5));
-    let g = lerp(S.grip, S.driftGrip, this.gripBlend) * (onRoad ? 1 : SURFACE.grassGripMult);
+    let g = lerp(S.grip, S.driftGrip, this.gripBlend) * (onRoad ? (this.q.grip ?? 1) : SURFACE.grassGripMult);
     const slipAbs = Math.abs(slip);
     if (slipAbs > S.maxSlip) g *= 1 + (slipAbs - S.maxSlip) * 12;
     const vL0 = vL;

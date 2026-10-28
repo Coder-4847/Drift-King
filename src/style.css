@@ -111,3 +111,42 @@ html, body {
 }
 .menu button.focus { background: #fff; color: #1c1f1a; border-color: #fff; }
 .menu .prompt { margin-top: 10px; font-size: 14px; opacity: 0.75; }
+
+/* ---------- minimap + HUD extras ---------- */
+.minimap {
+  position: absolute; left: calc(var(--safe-l) + 12px); top: calc(var(--safe-t) + 12px);
+  width: clamp(92px, 24vmin, 150px); height: clamp(92px, 24vmin, 150px);
+  background: rgba(10,10,10,0.32); border-radius: 14px; border: 2px solid rgba(255,255,255,0.28);
+}
+.hud-lap { font-weight: 700; font-size: clamp(13px, 3vmin, 18px); letter-spacing: 0.08em; opacity: 0.9; }
+.wrongway {
+  position: absolute; left: 0; right: 0; top: 24%; text-align: center; font-weight: 900;
+  font-size: clamp(26px, 7vmin, 48px); color: #ff4d3d; letter-spacing: 0.06em;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.6); opacity: 0; transition: opacity 0.15s;
+}
+.wrongway.on { opacity: 1; animation: blink 0.7s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+.toast {
+  position: absolute; left: 0; right: 0; top: 40%; text-align: center; font-weight: 800;
+  font-size: clamp(20px, 5vmin, 34px); text-shadow: 0 2px 10px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.2s;
+}
+.toast.on { opacity: 1; }
+.debug { top: calc(var(--safe-t) + clamp(92px, 24vmin, 150px) + 22px) !important; }
+
+/* ---------- track preview (debug) ---------- */
+.preview {
+  position: fixed; inset: 0; z-index: 60; overflow-y: auto; touch-action: pan-y; background: #1c1f1a; padding: 12px 14px 40px;
+  user-select: text; -webkit-user-select: text;
+}
+.preview header { position: sticky; top: 0; background: #1c1f1a; padding: 6px 0 10px; z-index: 2; }
+.preview h1 { margin: 0 0 8px; font-size: 22px; } .preview h1 small { opacity: 0.6; font-weight: 500; font-size: 14px; }
+.preview .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preview .chips button { font: inherit; color: #fff; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.preview .chips button.on { background: #fff; color: #1c1f1a; }
+.preview .summary { margin-top: 8px; font-size: 13px; opacity: 0.8; }
+.preview .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 8px; }
+.preview .tile { display: block; color: #fff; text-decoration: none; background: rgba(255,255,255,0.06); border-radius: 12px; padding: 8px; border: 1px solid rgba(255,255,255,0.12); }
+.preview .tile.bad { border-color: #ff4d3d; }
+.preview .tile canvas { display: block; margin: 0 auto; border-radius: 8px; max-width: 100%; }
+.preview .info { font-size: 12px; line-height: 1.5; margin-top: 6px; }
+.preview .ok { color: #7dff9a; } .preview .no { color: #ff7a6a; }

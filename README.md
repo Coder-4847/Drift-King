@@ -3,8 +3,8 @@
 Top-down 3D drifting racer for the browser (Three.js + Vite, plain JavaScript, no external assets).
 Everything - meshes, particles, sounds - is generated in code. Progress is saved in `localStorage`.
 
-> **Status: Phase 1 (Foundation) done.** Later phases add the track system, Career, Grand Prix,
-> audio / garage / settings UI and the GitHub Pages deploy.
+> **Status: Phase 2 (Track system) done.** Phase 1 = foundation. Later phases: Career, Grand Prix,
+> audio / garage / settings UI, GitHub Pages deploy.
 
 ## Run it
 
@@ -13,7 +13,19 @@ npm install
 npm run dev        # http://localhost:5173   (add ?debug for an on-screen debug readout)
 npm run build      # production build in dist/
 npm run sim        # headless handling check of the car physics (tools/sim.js)
+npm run tracks     # (re)generate src/data/tracks.js: finds a valid seed for all 110 tracks
+npm run verify     # re-check all 110 tracks (geometry, bot lap, unique names)
+npm test           # lap/checkpoint/wrong-way tests + verify
 ```
+
+### Debug URLs
+
+| URL | What it does |
+|---|---|
+| `/?track=c3l5` | drive a specific track (`c<chapter>l<level>` for Career, `gp<chapter>` for Grand Prix) |
+| `/?track=c3l5&at=0.4` | start 40% of the way round (handy to look at a corner or an ice patch) |
+| `/?preview` | minimap of all 110 tracks with stats and a live validity check; click a tile to drive it |
+| `&debug` | on-screen speed / slip / grip readout |
 
 ## Controls (three inputs only: Left, Right, Brake)
 
@@ -38,11 +50,40 @@ src/config.js      all handling / camera / quality constants (start here to tune
 src/settings.js    settings + save data (localStorage)
 src/input/         one input layer -> { steer: -1..1, brake: 0..1 }; keyboard, gamepad, touch
 src/game/          Car physics (pure maths), car model, camera rig, particles, world, game loop
-src/tracks/        Track (spline -> samples + queries), TrackBuilder (meshes), test track data
+src/tracks/        Track (spline -> samples + queries), TrackBuilder (meshes), generator (seeded),
+                   validate (geometry + bot lap), trackDefs (seed -> track definition)
+src/ai/            Driver: bot that drives with the same steer + brake inputs (AI in Phase 4)
 src/ui/            HUD, overlay menu
-src/data/          cars (levels, chapters, difficulty land in later phases)
-tools/             headless helpers (sim.js, trackinfo.js)
+src/data/          chapters (themes, props, name words), tracks (generated seeds), cars
+tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTracks.js, racetest.js
 ```
+
+## Track system (Phase 2)
+
+* **Data -> track:** `src/data/tracks.js` holds one entry per track (id, name, seed, laps, length, bot
+  reference time). `trackDefs.js` re-creates the control points deterministically from the seed
+  (points are rounded to 0.1 m so every device gets the same track), `Track` turns them into a closed
+  Catmull-Rom centreline sampled every 2 m, and `TrackBuilder` makes the road, edge lines, curbs (outside
+  of corners), start line, ice patches, walls and the green racing-line chevrons.
+* **Generator** (`src/tracks/generator.js`): a closed loop in polar form (superellipse base shape per
+  chapter + harmonics + localized bumps for hairpins and chicanes). Parameters per slot come from
+  `paramsFor()`: they ramp from easy (wide, gentle, no hairpins) to hard over the 100 levels.
+  Grand Prix tracks are wider with a fixed medium difficulty.
+* **Validation** (`src/tracks/validate.js`, run by `npm run tracks` / `npm run verify`): minimum corner
+  radius >= 14 m, road width >= 10.5 m, length 600-2200 m, walls of distant road sections never touch
+  (clearance), and a **bot lap** (the `Driver`, using only steer + brake) must finish without getting
+  stuck or hitting walls. Bad seeds are rejected and the next one tried; the accepted seed is stored.
+  After changing the generator, chapter styles or car handling, run `npm run tracks`.
+* **Laps / checkpoints** (`src/game/Race.js`): progress is the unwrapped distance along the centreline;
+  checkpoints must be passed in order, reversing never counts, and driving against the road direction for
+  ~0.7 s shows "WRONG WAY". Career laps are chosen so a run is ~30-90 s (`laps` in the data file).
+* **Themes** (`src/data/chapters.js`): ground / sky / haze / light colours, curbs, walls, chevrons, props
+  (pines, snow pines, round trees, palms, cacti, mesas, dunes, rocks, dead trees, poles, lamps with light
+  pools, neon signs, buildings with lit windows, containers, cranes) and the name word lists.
+  Frostbite Pass also has **ice patches** (40% grip) on gentle sections. Edit `props` to change density.
+* **Minimap:** simple line drawing in the HUD corner (north-up, start line in red).
+* **Names:** every track gets a "First Second" name (or a single word) from its chapter's lists, unique
+  across all 110.
 
 ## Tuning
 
@@ -59,4 +100,7 @@ tools/             headless helpers (sim.js, trackinfo.js)
 * One metre = one world unit; the car is ~4.3 m long and tracks are ~13 m wide.
 * The brake is the only way to start a drift. Braking while sliding is deliberately weak so the slide is
   sustained rather than killing speed.
-* Walls sit ~9 m beyond the road edge (grass in between slows you down); hitting them bounces gently.
+* Tracks are star-shaped loops (single-valued in polar coordinates), so they cannot self-intersect; variety
+  comes from per-seed proportions, harmonics, hairpin lobes/bays and chicanes. Fancier shapes (bridges,
+  figure-eights) are not generated.
+* Walls sit ~7 m beyond the road edge (grass in between slows you down); hitting them bounces gently.
