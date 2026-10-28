@@ -3,8 +3,8 @@
 Top-down 3D drifting racer for the browser (Three.js + Vite, plain JavaScript, no external assets).
 Everything - meshes, particles, sounds - is generated in code. Progress is saved in `localStorage`.
 
-> **Status: Phase 5 (Polish) done.** Phases 1-4 = foundation, track system, Career, Grand Prix. Next: the
-> GitHub Pages deploy (Phase 6).
+> **Status: all 6 phases done** (foundation, track system, Career, Grand Prix, polish, deploy).
+> Play it: https://coder-4847.github.io/Drift-King/
 
 ## Run it
 
@@ -31,6 +31,15 @@ npm test           # career rules, laps/checkpoints, all 110 tracks, Grand Prix 
 | `&debug` | on-screen speed / slip / grip readout |
 | `?track=c3l5` | skips the menus and starts that Career level |
 | `?track=gp4&diff=3` | skips the menus and starts a Grand Prix race (`diff` 0 Rookie ... 4 Legendary) |
+
+## Deploy (GitHub Pages)
+
+* `vite.config.js` uses `base: './'`, so the same build works at `https://<user>.github.io/<repo>/` or any other path.
+* `.github/workflows/deploy.yml` runs `npm test`, `npm run build` and publishes `dist/` on every push to `main`
+  (or the default branch listed in the workflow) and on manual runs (Actions -> Deploy to GitHub Pages -> Run workflow).
+* **One-time setup:** repository **Settings -> Pages -> Build and deployment -> Source: GitHub Actions**.
+* Manual deploy without Actions: `npm run build`, then publish the `dist/` folder with any static host.
+* Local preview of the production build: `npm run build && npm run preview`.
 
 ## Controls (three inputs only: Left, Right, Brake)
 
