@@ -512,3 +512,69 @@ export function garageScreen(app) {
   render();
   return { el: root, autofocus: sheet.querySelector('[data-sel="action"]'), onBack: () => app.openMainMenu() };
 }
+
+// ------------------------------------------------------------------ loss (left the road)
+const TIPS = [
+  'Steer hard to start a drift, then counter-steer to hold the angle.',
+  'Too much angle spins you out. Brake to pull the car back in line.',
+  'Brake early for very tight corners. Slower is better than off the road.',
+  'Ease off the steering as the corner opens up to straighten the drift.',
+  'Watch the red glow at the screen edge: it means the road edge is close.',
+];
+let tipIndex = 0;
+
+/** Count a number up from 0 with an ease-out, starting after `delay` ms. */
+function countUp(node, to, fmt, delay, duration = 900) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { node.textContent = fmt(to); return; }
+  node.textContent = fmt(0);
+  setTimeout(() => {
+    const t0 = performance.now();
+    const tick = (now) => {
+      if (!node.isConnected) return;
+      const k = Math.min(1, (now - t0) / duration);
+      node.textContent = fmt(to * (1 - (1 - k) ** 3));
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, delay);
+}
+
+/**
+ * Shown after the crash replay. info: { time, driftScore, progress (0..1), lap, laps, best (seconds|undefined) }
+ * ctx: { title (track name), mode ('Career' | 'Grand Prix · Pro'), retry(), menu() }
+ */
+export function lossScreen(app, info, ctx) {
+  const root = el('div', 'scr scr-loss');
+  const pct = Math.round(info.progress * 100);
+  const word = 'OFF THE ROAD'.split(' ').map((w) => w.split('').map((ch) => ch).join(''));
+  let n = 0;
+  const letters = word.map((w) => `<span class="word">${[...w].map((ch) => `<span class="ltr" style="--i:${n++}">${ch}</span>`).join('')}</span>`).join(' ');
+  root.innerHTML = `
+    <div class="loss-vignette"></div>
+    <div class="loss-card">
+      <div class="loss-kicker">${ctx.mode} · ${ctx.title}</div>
+      <h1 class="loss-title" aria-label="Off the road">${letters}</h1>
+      <div class="loss-sub">You left the track${info.laps > 1 ? ` on lap ${info.lap} of ${info.laps}` : ''}.</div>
+      <div class="loss-meter" style="--p:${pct}%">
+        <div class="loss-track"><i class="loss-fill"></i><b class="loss-x">✕</b></div>
+        <span class="loss-pct">0%</span> <small>of the race</small>
+      </div>
+      <div class="loss-stats">
+        <div><small>Time</small><b class="c-time">0.00</b></div>
+        <div><small>Drift score</small><b class="c-drift">0</b></div>
+        ${info.best !== undefined ? `<div><small>Best</small><b>${fmtTime(info.best)}</b></div>` : ''}
+      </div>
+      <div class="loss-tip">${TIPS[tipIndex++ % TIPS.length]}</div>
+    </div>`;
+  const actions = el('div', 'row loss-actions');
+  const retry = button('Retry', () => ctx.retry(), 'primary pulse');
+  const menu = button('Menu', () => ctx.menu());
+  actions.append(retry, menu);
+  root.appendChild(actions);
+
+  countUp(root.querySelector('.loss-pct'), pct, (v) => `${Math.round(v)}%`, 750, 1100);
+  countUp(root.querySelector('.c-time'), info.time, (v) => fmtTime(v), 1000);
+  countUp(root.querySelector('.c-drift'), info.driftScore, (v) => fmtScore(v), 1100);
+  setTimeout(() => { if (root.isConnected) audio.lossSting(); }, 350);
+  return { el: root, autofocus: retry, onBack: () => ctx.menu() };
+}

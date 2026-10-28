@@ -4,38 +4,43 @@ export const PHYSICS_DT = 1 / 120;
 
 // Default car handling. Individual cars (src/data/cars.js) override any of these.
 export const CAR = {
-  maxSpeed: 32,          // auto-accelerate cap (m/s)
-  accel: 15,             // base acceleration (m/s^2), fades out near max speed
-  brakeDecel: 28,        // braking deceleration (m/s^2)
-  minBrakeSpeed: 9,      // braking never slows the car below this
+  maxSpeed: 24,          // auto-accelerate cap (m/s)
+  accel: 12,             // base acceleration (m/s^2), fades out near max speed
+  brakeDecel: 24,        // braking deceleration (m/s^2)
+  minBrakeSpeed: 7,      // braking never slows the car below this
 
-  steerRate: 2.05,       // max yaw rate (rad/s) at full steering
-  steerRefSpeed: 7,      // speed at which steering reaches full strength
-  steerMinFactor: 0.3,   // steering authority at standstill (so the car can never be stuck facing a wall)
-  steerResponse: 14,     // how fast yaw rate follows input (1/s)
+  steerRate: 2.05,       // yaw rate (rad/s) at full steering and low speed
+  steerSpeedGain: 0.8,   // extra yaw authority at top speed (fraction): this is what lets the tail go
+  steerRefSpeed: 6,      // speed at which steering reaches full strength
+  steerMinFactor: 0.3,   // steering authority at standstill
+  steerResponse: 14,     // how fast yaw rate follows (1/s)
 
-  grip: 8.5,             // lateral velocity decay (1/s) with full grip
-  driftGrip: 4.2,        // lateral velocity decay while the rear is loose
-  gripLoseRate: 14,      // rear grip blend lost per second while braking+turning
-  gripRecoverRate: 3.2,  // rear grip blend regained per second after releasing
+  // grip / drift
+  grip: 3.8,             // sideways velocity decay (1/s) while gripping
+  looseGrip: 2.4,        // ... while sliding (the car keeps going the way it was going)
+  slipLoose0: 0.17,      // slip angle (rad) where the tail starts to let go ...
+  slipLoose1: 0.34,      // ... and is fully loose
+  looseRise: 9,          // how fast the tail lets go (1/s)
+  looseFall: 3.2,        // how fast grip comes back (1/s)
+  slideSteer: 0.6,       // steering authority left while sliding (a locked-over wheel does less)
+  oversteer: 2.5,        // slide: yaw rate gained per rad of slip at top speed (the instability you counter-steer)
+  align: 5.0,            // grip: yaw rate lost per rad of slip (self straightening)
+  brakeAlign: 4.5,       // braking pulls the nose back in line (recovery)
+  brakeGrip: 0.8,        // braking gives grip back (share of looseness removed at full brake)
+  spinSlip: 1.2,         // slip angle (rad) beyond which the car is spinning out
+  spinScrub: 1.3,        // speed lost per second (exponential rate) while spinning out
   gripSpeedKeep: 0.92,   // share of sideways speed kept when grip turns it forward
   driftSpeedKeep: 0.8,   // same while sliding (the rest is scrubbed off)
-  driftYawMult: 1.35,    // extra yaw while sliding
-  driftKick: 1.7,        // yaw impulse (rad/s) when brake is pressed while steering
-  driftMinSpeed: 13,     // need at least this speed to start a drift
-  driftSlipMin: 0.22,    // slip angle (rad) that counts as drifting
-  maxSlip: 0.95,         // beyond this slip angle grip ramps back up
-  driftBrakeFactor: 0.1, // braking strength while sliding
-  driftAccelFactor: 0.8, // auto-accel kept while braking in a drift
-  driftDrag: 0.05,       // extra speed loss per second while sliding
+  driftMinSpeed: 9,     // below this the car just grips
+  driftSlipMin: 0.25,    // slip angle (rad) that counts as drifting
 
   // Mini-turbo on drift release: [tier1, tier2]
   boostMinTime: [0.8, 1.9],  // drift seconds needed
-  boostSpeed: [4, 8],        // extra top speed
+  boostSpeed: [3, 6],        // extra top speed
   boostTime: [0.9, 1.5],     // boost duration
   boostAccelMult: 3,
 
-  driftScoreRate: 0.5,
+  driftScoreRate: 5,
 };
 
 // Surface effects, shared by every car.

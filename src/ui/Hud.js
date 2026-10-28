@@ -13,6 +13,8 @@ export class Hud {
       <div class="wrongway">WRONG WAY</div>
       <div class="toast"></div>
       <div class="countdown"></div>
+      <div class="danger"></div>
+      <div class="crashfx"></div>
       <div class="gp-pos"></div>
       <div class="gp-list"></div>
       <div class="drift-pop"><span></span><small></small></div>
@@ -30,6 +32,8 @@ export class Hud {
     root.querySelector('.hud-pause').addEventListener('mousedown', (e) => e.preventDefault());
     this.root = root;
     this.cd = root.querySelector('.countdown');
+    this.dangerEl = root.querySelector('.danger');
+    this.crashEl = root.querySelector('.crashfx');
     this.posEl = root.querySelector('.gp-pos');
     this.listEl = root.querySelector('.gp-list');
     this.lap = root.querySelector('.hud-lap');
@@ -63,6 +67,19 @@ export class Hud {
       this.listEl.innerHTML = rows.map((r, i) =>
         `<div class="${r.you ? 'you' : ''}"><b>${i + 1}</b><i style="background:${r.color == null ? '#ff5a4a' : '#' + r.color.toString(16).padStart(6, '0')}"></i>${r.name}</div>`).join('');
     }
+  }
+
+  /** 0..1: red glow at the screen edges (near the road edge / about to spin). */
+  setDanger(v) {
+    const q = Math.round(v * 20) / 20;
+    if (this.cache.danger !== q) { this.cache.danger = q; this.dangerEl.style.opacity = q; }
+  }
+
+  /** Crash replay: flash, then everything but the effects fades away. */
+  crashed(on) {
+    this.root.classList.toggle('crashed', on);
+    this.crashEl.classList.remove('flash');
+    if (on) { void this.crashEl.offsetWidth; this.crashEl.classList.add('flash'); }
   }
 
   setVisible(v) { this.root.style.display = v ? '' : 'none'; }
@@ -142,7 +159,7 @@ export class Hud {
   // Control hints, first race only; text follows the device currently in use.
   showHints() {
     if (progress.hintsSeen) return;
-    this.hintTimer = 9;
+    this.hintTimer = 12;
     this.renderHint();
     this.hint.classList.add('on');
   }
@@ -150,9 +167,9 @@ export class Hud {
   renderHint() {
     const dev = this.input.device;
     const lines = {
-      touch: 'The car speeds up by itself.<br>Use <b>◀ ▶</b> to steer. Hold the <b>BRAKE</b> while turning to drift.',
-      keyboard: `The car speeds up by itself.<br><b>${keyName(settings.keys.left[0])} / ${keyName(settings.keys.right[0])}</b> or <b>← →</b> to steer. Hold <b>${keyName(settings.keys.brake[0])}</b> while turning to drift.`,
-      gamepad: 'The car speeds up by itself.<br><b>Left stick</b> to steer. Hold <b>A / RT</b> while turning to drift.',
+      touch: 'Steer hard to <b>drift</b>, then counter-steer to hold it.<br><b>BRAKE</b> only to slow for a tight corner or save a spin. <b>Leave the road and you lose.</b>',
+      keyboard: `Steer hard to <b>drift</b> (<b>${keyName(settings.keys.left[0])} / ${keyName(settings.keys.right[0])}</b>), then counter-steer to hold it.<br><b>${keyName(settings.keys.brake[0])}</b> only to slow for a tight corner or save a spin. <b>Leave the road and you lose.</b>`,
+      gamepad: 'Steer hard with the <b>left stick</b> to drift, then counter-steer to hold it.<br><b>A / RT</b> only to slow for a tight corner or save a spin. <b>Leave the road and you lose.</b>',
     };
     this.hint.innerHTML = lines[dev] || lines.keyboard;
   }

@@ -29,6 +29,9 @@ import { GhostRecorder, loadGhost } from './ghost.js';
 
 const COUNTDOWN = 3.2;      // seconds of 3-2-1 before GO
 const FINISH_DELAY = 1.7;   // seconds of roll-out before the result screen
+const CRASH_SHOW = 1.55;    // seconds of crash replay before the loss screen opens
+const CRASH_INPUT = { steer: 0, brake: 0.6 };
+const lerp = (a, b, t) => a + (b - a) * t;
 
 function disposeScene(scene) {
   scene.traverse((o) => {
@@ -39,8 +42,11 @@ function disposeScene(scene) {
 }
 
 export class Game {
-  constructor({ canvas, hudRoot, input, debug = false, onPauseButton, onAutoPause, onFinish }) {
+  constructor({ canvas, hudRoot, input, debug = false, onPauseButton, onAutoPause, onFinish, onCrash }) {
     this.canvas = canvas;
+    this.onCrash = onCrash;
+    this.timeScale = 1;       // slow motion during a crash
+    this.crash = null;
     this.input = input;
     this.debug = debug;
     this.onFinish = onFinish;
@@ -180,8 +186,18 @@ export class Game {
     }
   }
 
+  resetCrash() {
+    this.timeScale = 1;
+    this.crash = null;
+    this.model?.endCrash();
+    this.rig.crashReset();
+    this.hud.crashed(false);
+    this.hud.setDanger(0);
+  }
+
   enterDemo() {
     this.clearGrid();
+    this.resetCrash();
     this.setupGhost(null);
     this.mode = 'demo';
     this.paused = false;
@@ -209,6 +225,7 @@ export class Game {
     this.mode = 'countdown';
     this.paused = false;
     this.countdown = COUNTDOWN;
+    this.resetCrash();
     this.lastCountN = 0;
     audio.duck(false);
     this.finishTimer = 0;
@@ -284,6 +301,29 @@ export class Game {
     this.renderer.render(g.scene, cam);
   }
 
+  /** The player left the road: slow motion crash replay, then the loss screen (via onCrash). */
+  startCrash() {
+    const car = this.car;
+    this.mode = 'crashing';
+    this.crash = { t: 0, reported: false };
+    this.updateTouch();
+    this.hud.hideHints();
+    this.hud.countdown(null);
+    this.hud.setDanger(0);
+    this.hud.crashed(true);
+    const side = Math.sign(car.q.lat || 1);
+    this.model.startCrash(side, car.speed);
+    this.rig.crashKick();
+    // dust / smoke burst where the car left the road
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * 6.283, sp = 2 + Math.random() * 6;
+      this.smoke.emit(this.time, car.x + (Math.random() - 0.5) * 2, car.z + (Math.random() - 0.5) * 2,
+        car.vx * 0.3 + Math.cos(a) * sp, car.vz * 0.3 + Math.sin(a) * sp, 1.1 + Math.random() * 0.9, 1.8 + Math.random() * 2.2);
+    }
+    audio.crash();
+    if (settings.vibration) navigator.vibrate?.([60, 40, 120]);
+  }
+
   pause() { if (!this.canPause()) return false; this.paused = true; this.hud.pauseHints(true); this.updateTouch(); return true; }
   resume() { this.paused = false; this.hud.pauseHints(false); this.last = performance.now(); this.updateTouch(); }
 
@@ -315,14 +355,15 @@ export class Game {
     const inp = this.input.update(dt);
     if (this.mode === 'garage') { this.drawGarage(dt); return; }
     if (!this.paused) {
-      this.time += dt;
+      const simDt = dt * this.timeScale;     // < 1 in the slow-motion crash replay
+      this.time += simDt;
       this.stepMode(dt);
-      this.acc += dt;
+      this.acc += simDt;
       while (this.acc >= PHYSICS_DT) {
         this.acc -= PHYSICS_DT;
         this.simStep(inp);
       }
-      this.effects(dt);
+      this.effects(simDt, dt);
     }
     this.draw(dt, inp);
   }
@@ -356,6 +397,20 @@ export class Game {
         this.hud.countdown('GO!', 0.7);
         this.hud.showHints();
       }
+    } else if (this.mode === 'crashing') {
+      const c = this.crash;
+      c.t += dt;
+      // quick drop into slow motion, hold, then ease to a standstill while the loss screen comes in
+      const u = c.t;
+      this.timeScale = u < 0.16 ? lerp(1, 0.22, 1 - (1 - u / 0.16) ** 2) : u < 1.05 ? 0.22 : Math.max(0.02, 0.22 * (1 - (u - 1.05) / 0.55));
+      if (u > CRASH_SHOW && !c.reported) {
+        c.reported = true;
+        const r = this.race, laps = r.laps, L = this.track.length;
+        this.onCrash?.({
+          time: r.time, driftScore: this.car.totalDriftScore + this.car.driftScore, laps, lap: Math.min(r.lap + 1, laps),
+          progress: Math.max(0, Math.min(1, r.prog / (laps * L))),
+        });
+      }
     } else if (this.mode === 'finished') {
       this.finishTimer -= dt;
       if (this.finishTimer <= 0 && !this.reported) {
@@ -372,7 +427,7 @@ export class Game {
   simStep(inp) {
     const car = this.car;
     if (this.mode === 'countdown') return; // held on the grid
-    const control = this.mode === 'racing' ? inp : this.bot.drive(car);
+    const control = this.mode === 'racing' ? inp : this.mode === 'crashing' ? CRASH_INPUT : this.bot.drive(car);
     if (this.grid) {
       this.grid.step(PHYSICS_DT, control);
       for (const b of this.grid.bumps) if (b.entry.isPlayer && b.strength > 0.1 && this.time - (this.lastBumpSfx || 0) > 0.15) { this.lastBumpSfx = this.time; audio.bump(); }
@@ -380,6 +435,7 @@ export class Game {
       car.step(control, PHYSICS_DT, this.track);
       if (this.mode === 'racing') this.race.update(car, PHYSICS_DT);
     }
+    if (this.mode === 'racing' && !car.onRoad) { this.startCrash(); return; } // leaving the road ends the run
     if (this.mode !== 'racing') return;
 
     for (const e of car.events) {
@@ -401,19 +457,26 @@ export class Game {
     }
   }
 
-  effects(dt) {
+  effects(dt, realDt = dt) {
     const car = this.car;
     if (this.mode === 'racing' || this.mode === 'finished') {
-      this.hud.tick(dt);
+      this.hud.tick(realDt);
       if (this.mode === 'racing' && this.recorder) this.recorder.sample(this.race.time, car);
       this.hudAcc = (this.hudAcc || 0) + dt;
       if (this.hudAcc > 0.033) { this.hudAcc = 0; this.hud.setBig(fmtTime(this.race.time)); }
       this.hud.setLap(this.race.laps > 1 ? `LAP ${this.race.lapDisplay}/${this.race.laps}` : '');
       this.hud.setWrongWay(this.mode === 'racing' && this.race.wrongWay);
       this.hud.driftLive(this.mode === 'racing' && car.driftActive ? car.driftScore : 0);
+      if (this.mode === 'racing') {
+        // red edge glow when the car is close to leaving the road, or about to spin out
+        const hw = this.track.halfWidth, from = hw - 3;
+        const edge = (car.q.dist - from) / (this.track.offRoadOffset - from);
+        const spin = car.spinning ? 0.75 : Math.max(0, (Math.abs(car.slip) - 0.72) / 0.28) * 0.75;
+        this.hud.setDanger(Math.max(0, Math.min(1, Math.max(edge, spin))));
+      }
       if (car.driftActive || car.drifting) this.hud.hideHints();
     } else {
-      this.hud.tick(dt);
+      this.hud.tick(realDt);
     }
 
     if (this.grid) {
@@ -462,7 +525,7 @@ export class Game {
     const car = this.car;
     const steer = this.mode === 'racing' ? inp.steer : this.bot.out.steer;
     this.steerShown += (steer - this.steerShown) * Math.min(1, 14 * dt);
-    this.model.update(car, this.steerShown);
+    this.model.update(car, this.steerShown, dt * this.timeScale);
     if (this.grid) for (const e of this.grid.entries) if (e.model) e.model.update(e.car, e.driver.out.steer);
     if (this.ghostModel) {
       const live = this.mode === 'racing' || this.mode === 'countdown';

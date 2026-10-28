@@ -153,6 +153,20 @@ export class AudioEngine {
     this.noise(this.ctx.currentTime, 0.18, { type: 'lowpass', freq: 500, gain: 0.25 * clamp(strength * 2, 0.3, 1), dest: this.sfx });
     this.tone(90, 0.14, { type: 'sine', gain: 0.3 * clamp(strength * 2, 0.3, 1), slideTo: 45 });
   }
+  /** Leaving the road: a heavy hit, a metallic scrape and a falling groan. Music muffles. */
+  crash() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.noise(t, 0.7, { type: 'lowpass', freq: 1100, sweepTo: 110, gain: 0.5, dest: this.sfx });
+    this.tone(110, 0.6, { type: 'sine', gain: 0.4, slideTo: 36 });
+    this.noise(t + 0.03, 0.18, { type: 'highpass', freq: 2800, gain: 0.18, dest: this.sfx });
+    this.tone(260, 0.9, { type: 'sawtooth', gain: 0.05, slideTo: 55, lp: 500, delay: 0.05 });
+    this.noise(t + 0.35, 0.3, { type: 'bandpass', freq: 600, q: 2, gain: 0.12, dest: this.sfx });
+    this.duck(true);
+  }
+  /** Soft falling sting when the loss screen opens. */
+  lossSting() { [392, 311, 233].forEach((f, i) => this.bell(f, i * 0.16, 0.1)); }
+
   bump() { this.noise(this.ctx ? this.ctx.currentTime : 0, 0.08, { type: 'lowpass', freq: 800, gain: 0.1, dest: this.sfx }); }
   lap() { this.bell(988, 0, 0.12); this.bell(1319, 0.1, 0.12); }
   star(i) { this.bell([1047, 1319, 1568][i] || 1568, 0, 0.18); this.tone([523, 659, 784][i] || 784, 0.25, { type: 'triangle', gain: 0.06 }); }

@@ -2,7 +2,8 @@
 
 import { UI } from './ui/UI.js';
 import { audio } from './audio/Audio.js';
-import { mainMenu, levelSelect, preRace, results, pauseMenu, gpSelect, gpPreRace, gpResults, settingsScreen, keysScreen, confirmReset, garageScreen } from './ui/screens.js';
+import { mainMenu, levelSelect, preRace, results, pauseMenu, gpSelect, gpPreRace, gpResults, settingsScreen, keysScreen, confirmReset, garageScreen, lossScreen } from './ui/screens.js';
+import { specOf } from './tracks/trackDefs.js';
 import * as garage from './game/garage.js';
 import { resetProgress } from './settings.js';
 import * as career from './game/career.js';
@@ -23,6 +24,7 @@ export class App {
     this.gpDiff = 0;
 
     game.onFinish = (r) => this.finished(r);
+    game.onCrash = (info) => this.crashed(info);
     input.onNav((a) => this.onNav(a));
   }
 
@@ -132,6 +134,26 @@ export class App {
     if (rec.newBest && r.ghost) saveGhost(lvl.id, r.time, r.ghost);
     this.game.hud.setVisible(false);
     this.ui.open(results(this, { lvl, time: r.time, driftScore: r.driftScore, rec, next: career.nextLevel(lvl) }));
+  }
+
+  /** The player left the road. */
+  crashed(info) {
+    const g = this.game;
+    g.hud.setVisible(false);
+    const ctx = { title: specOf(g.trackId)?.name || '', mode: 'Free drive', retry: () => this.startFreeRace(g.trackId), menu: () => this.openMainMenu() };
+    if (this.currentGp) {
+      const { trackId, diff } = this.currentGp;
+      ctx.mode = `Grand Prix · ${DIFFICULTIES[diff].name}`;
+      ctx.retry = () => this.startGpRace(trackId, diff);
+      ctx.menu = () => this.openGpSelect(diff, trackId);
+    } else if (this.current) {
+      const lvl = this.current;
+      ctx.mode = 'Career';
+      info.best = career.bestTime(lvl.id);
+      ctx.retry = () => this.startCareerRace(lvl.id);
+      ctx.menu = () => this.openLevelSelect(lvl.chapter, lvl.level);
+    }
+    this.ui.open(lossScreen(this, info, ctx));
   }
 
   pause() {

@@ -14,7 +14,12 @@ export class CameraRig {
     this.focus = new THREE.Vector3();
     this.anchor = new THREE.Vector3();
     this.height = CAMERA.baseHeight;
+    this.shake = 0;       // crash shake amplitude (decays)
+    this.punch = 0;       // crash zoom-in (decays)
   }
+
+  crashKick() { this.shake = 1; this.punch = 1; }
+  crashReset() { this.shake = 0; this.punch = 0; }
 
   setAspect(aspect) {
     this.camera.aspect = aspect;
@@ -37,6 +42,8 @@ export class CameraRig {
   }
 
   update(car, dt) {
+    this.shake *= Math.exp(-2.4 * dt);
+    this.punch += ((this.punch > 0.02 ? 0.55 : 0) - this.punch) * Math.min(1, 1.2 * dt); // ease to a gentle zoom-in
     // face the travel direction, nudged towards where the nose points
     const travel = car.speed > 4 ? Math.atan2(car.vx, car.vz) : car.heading;
     const target = travel + wrapAngle(car.heading - travel) * 0.35;
@@ -50,13 +57,14 @@ export class CameraRig {
   }
 
   apply() {
-    const H = this.height;
+    const H = this.height * (1 - 0.16 * this.punch);
     const viewH = 2 * H * Math.tan(THREE.MathUtils.degToRad(CAMERA.fov / 2));
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
     const ahead = viewH * CAMERA.lookAheadView;
     this.focus.set(this.anchor.x + fx * ahead, 0, this.anchor.z + fz * ahead);
     const back = H * CAMERA.tiltBack;
-    this.camera.position.set(this.focus.x - fx * back, H, this.focus.z - fz * back);
+    const sh = this.shake * 1.1;
+    this.camera.position.set(this.focus.x - fx * back + (Math.random() - 0.5) * sh, H, this.focus.z - fz * back + (Math.random() - 0.5) * sh);
     this.camera.lookAt(this.focus);
   }
 }

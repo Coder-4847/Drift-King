@@ -1,9 +1,10 @@
 // Generates src/data/levels.js: the three star times for each of the 100 career levels.
 //   npm run levels
-// Times are derived from a bot run of the whole level (all laps, standing start, steer + brake only):
-//   3 stars (gold)   <= bot * GOLD
-//   2 stars (silver) <= bot * SILVER
-//   1 star           <= bot * BRONZE
+// Times are derived from bot runs of the whole level (all laps, standing start, steer + brake only):
+//   3 stars (gold)   <= drift bot * GOLD      (a controlled drifting run)
+//   2 stars (silver) <= drift bot * SILVER
+//   1 star           <= max(drift bot * BRONZE, cautious grip bot * 1.1)  (anyone who can finish gets a star)
+// The cautious bot never drifts: it brakes for every corner, so it is ~1.3-2.1x slower than the drift bot.
 // The factors ease from the first level (g = 0) to the last (g = 1). Tune the numbers below, or edit
 // src/data/levels.js directly (it is plain data), then run `npm run levels` again to apply factors.
 
@@ -14,25 +15,28 @@ import { Track } from '../src/tracks/Track.js';
 import { botLap } from '../src/tracks/validate.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
-const GOLD = (g) => lerp(1.16, 1.04, g);
-const SILVER = (g) => lerp(1.34, 1.2, g);
-const BRONZE = (g) => lerp(1.75, 1.5, g);
+const GOLD = (g) => lerp(1.3, 1.12, g);
+const SILVER = (g) => lerp(1.65, 1.36, g);
+const BRONZE = (g) => lerp(2.1, 1.7, g);
 const r1 = (x) => Math.round(x * 10) / 10;
 
 const out = [];
 let worstSloppy = 0;
 for (const spec of TRACKS.filter((t) => t.kind === 'career')) {
   const track = new Track(getTrackDef(spec.id));
-  const bot = botLap(track, { laps: spec.laps });
+  const bot = botLap(track, { laps: spec.laps, driver: { style: 'drift' } });
   if (!bot.finished) throw new Error('bot cannot finish ' + spec.id);
+  const safe = botLap(track, { laps: spec.laps, driver: { style: 'grip', cornerEntry: 0.9 } });
+  if (!safe.finished) throw new Error('cautious bot cannot finish ' + spec.id);
   const g = (spec.chapter * 10 + spec.level) / 99;
   const lvl = { id: spec.id, chapter: spec.chapter, level: spec.level, track: spec.id, laps: spec.laps,
-    ref: r1(bot.time), gold: r1(bot.time * GOLD(g)), silver: r1(bot.time * SILVER(g)), bronze: r1(bot.time * BRONZE(g)) };
-  // sanity: the perfect bot must get 3 stars; a sloppy bot (80% speed) must still get at least 1
+    ref: r1(bot.time), gold: r1(bot.time * GOLD(g)), silver: r1(bot.time * SILVER(g)),
+    bronze: r1(Math.max(bot.time * BRONZE(g), safe.time * 1.1)) };
+  if (lvl.silver >= lvl.bronze) lvl.bronze = r1(lvl.silver * 1.15);
+  // sanity: the drift bot must get 3 stars; a cautious bot that never drifts must still get at least 1
   if (bot.time > lvl.gold) throw new Error('gold unreachable for ' + spec.id);
-  const sloppy = botLap(track, { laps: spec.laps, driver: { speedScale: 0.8 } });
-  if (!sloppy.finished || sloppy.time > lvl.bronze) throw new Error(`80% bot misses bronze on ${spec.id}: ${sloppy.time}`);
-  worstSloppy = Math.max(worstSloppy, sloppy.time / lvl.bronze);
+  if (safe.time > lvl.bronze) throw new Error(`cautious bot misses bronze on ${spec.id}: ${safe.time}`);
+  worstSloppy = Math.max(worstSloppy, safe.time / lvl.bronze);
   out.push(lvl);
 }
 
@@ -44,4 +48,4 @@ export const LEVELS = [
 ${body},
 ];
 `);
-console.log(`${out.length} levels written. Slowest 80%-speed bot used ${(worstSloppy * 100).toFixed(0)}% of the 1-star limit.`);
+console.log(`${out.length} levels written. Slowest cautious bot used ${(worstSloppy * 100).toFixed(0)}% of the 1-star limit.`);

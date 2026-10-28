@@ -17,7 +17,7 @@ const ok = (c, m) => { if (!c) { fail++; console.error('FAIL', m); } else consol
 const meanFinish = {};
 for (const diffIdx of [0, 2, 4]) {
   const times = [];
-  let allOk = true, worstStuck = 0, wallHits = 0;
+  let allOk = true, worstStuck = 0, wallHits = 0, respawns = 0;
   for (const spec of gpTracks()) {
     const track = new Track(getTrackDef(spec.id));
     const playerCar = new Car();
@@ -34,10 +34,11 @@ for (const diffIdx of [0, 2, 4]) {
       }
     }
     if (!grid.entries.every((e) => e.finished)) { allOk = false; console.error('  not all finished on', spec.id, DIFFICULTIES[diffIdx].name); }
-    for (const e of grid.entries) if (!e.isPlayer && e.finished) times.push(e.finishTime / (spec.ref * 3));
+    for (const e of grid.entries) { if (!e.isPlayer && e.finished) times.push(e.finishTime / (spec.ref * 3)); respawns += e.respawns || 0; }
   }
   meanFinish[diffIdx] = times.reduce((a, b) => a + b, 0) / times.length;
-  ok(allOk && worstStuck < 4, `${DIFFICULTIES[diffIdx].name}: all AIs finish on all 10 tracks (longest stop ${worstStuck.toFixed(1)}s, hard wall hits ${wallHits})`);
+  ok(allOk && worstStuck < 4, `${DIFFICULTIES[diffIdx].name}: all AIs finish on all 10 tracks (longest stop ${worstStuck.toFixed(1)}s)`);
+  ok(respawns <= (diffIdx === 0 ? 8 : 3), `${DIFFICULTIES[diffIdx].name}: AI cars left the road ${respawns} time(s) in 10 races (limit ${diffIdx === 0 ? 8 : 3})`);
 }
 ok(meanFinish[0] > meanFinish[2] && meanFinish[2] > meanFinish[4], `harder difficulty = faster AI (mean race time vs ref: ${[0, 2, 4].map((d) => meanFinish[d].toFixed(2)).join(' > ')})`);
 

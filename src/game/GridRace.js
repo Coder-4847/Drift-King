@@ -77,6 +77,11 @@ export class GridRace {
       }
       e.car.step(control, dt, this.track);
       e.race.update(e.car, dt);
+      // an AI car that leaves the road is put back on it (the player would lose, a rival just loses time)
+      if (!e.isPlayer) {
+        e.offT = e.car.onRoad ? 0 : (e.offT || 0) + dt;
+        if (e.offT > 0.35) this.respawn(e);
+      }
       if (e.race.finished && !e.finished) {
         e.finished = true;
         e.finishTime = e.race.finishTime;
@@ -91,6 +96,16 @@ export class GridRace {
       }
     }
     this.sortStandings();
+  }
+
+  respawn(e) {
+    const t = this.track, q = e.car.q;
+    const i = q.idx ?? 0;
+    e.car.reset(t.x[i], t.z[i], t.headingAt(i), 9);
+    e.car.q = {};
+    e.driver.recover?.();
+    e.offT = 0;
+    e.respawns = (e.respawns || 0) + 1;
   }
 
   sortStandings() {

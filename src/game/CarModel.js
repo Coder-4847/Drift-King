@@ -20,8 +20,10 @@ function taperedBox(w, h, d, { topX = 1, topZ = 1, frontTopDrop = 0, shiftZ = 0 
 export class CarModel {
   constructor(color = 0xe8453c, accent = 0xf4efe6) {
     this.group = new THREE.Group();
+    this.rig = new THREE.Group();    // whole car (tumbles in a crash)
+    this.group.add(this.rig);
     this.body = new THREE.Group();   // leans in slides
-    this.group.add(this.body);
+    this.rig.add(this.body);
 
     const paint = new THREE.MeshLambertMaterial({ color, flatShading: true });
     const trim = new THREE.MeshLambertMaterial({ color: accent, flatShading: true });
@@ -57,11 +59,11 @@ export class CarModel {
           const pivot = new THREE.Group();
           pivot.position.set(sx * 1.0, 0.46, 1.4);
           pivot.add(wheel);
-          this.group.add(pivot);
+          this.rig.add(pivot);
           this.frontPivots.push(pivot);
         } else {
           wheel.position.set(sx * 1.0, 0.46, -1.35);
-          this.group.add(wheel);
+          this.rig.add(wheel);
         }
       }
     }
@@ -77,13 +79,28 @@ export class CarModel {
     });
   }
 
-  /** Sync with the physics car. */
-  update(car, steer) {
+  /** Tumble animation after leaving the road: a hop, a half barrel roll and a few bounces. */
+  startCrash(side = 1, speed = 20) { this.crashT = 0; this.crashSide = side; this.crashPow = Math.min(1, speed / 30); }
+  endCrash() {
+    this.crashT = null;
+    this.rig.rotation.set(0, 0, 0); this.rig.position.y = 0;
+  }
+
+  /** Sync with the physics car. dt = (slow-motion) time since the last frame, drives the crash tumble. */
+  update(car, steer, dt = 0) {
     const g = this.group;
     g.position.set(car.x, 0, car.z);
     g.rotation.y = car.heading;
     // lean outward in slides, tiny nose dip when braking hard
     this.body.rotation.z = THREE.MathUtils.clamp(car.slip * 0.12, -0.12, 0.12);
+    if (this.crashT !== null && this.crashT !== undefined) {
+      this.crashT += dt;
+      const t = this.crashT;
+      const roll = (1 - Math.exp(-t * 2.6)) * Math.PI * this.crashSide;            // flips onto its roof
+      const hop = Math.max(0, 2.6 * this.crashPow * Math.sin(Math.min(t * 3.2, Math.PI))) + Math.abs(Math.sin(t * 7)) * 0.35 * Math.exp(-t * 1.6);
+      this.rig.rotation.set(0.25 * Math.sin(t * 4) * Math.exp(-t), 0, roll);
+      this.rig.position.y = hop + (t > 1.0 ? 0.5 : 0);   // ends up on its roof
+    }
     for (const p of this.frontPivots) p.rotation.y = -steer * 0.45;
   }
 }

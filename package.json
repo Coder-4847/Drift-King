@@ -14,7 +14,8 @@
     "levels": "node tools/buildLevels.js",
     "aitune": "node tools/aitune.js",
     "gpsim": "node tools/gpsim.js",
-    "test": "node tools/careertest.js && node tools/racetest.js && node tools/verifyTracks.js && node tools/gptest.js && node tools/ghosttest.js"
+    "human": "node tools/humantest.js",
+    "test": "node tools/careertest.js && node tools/racetest.js && node tools/verifyTracks.js && node tools/gptest.js && node tools/ghosttest.js && node tools/humantest.js --check"
   },
   "dependencies": {
     "three": "^0.186.1"

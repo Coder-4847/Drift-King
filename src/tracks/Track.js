@@ -13,7 +13,7 @@ export class Track {
     this.name = def.name;
     this.width = def.width;
     this.halfWidth = def.width / 2;
-    this.shoulder = def.shoulder ?? 7;                 // grass between road edge and wall
+    this.shoulder = def.shoulder ?? 3.5;               // grass between road edge and wall
     this.wallOffset = this.halfWidth + this.shoulder;
     this.offRoadOffset = this.halfWidth + 1.2;         // curbs count as road
     this.closed = def.closed !== false;

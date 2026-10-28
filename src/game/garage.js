@@ -32,9 +32,9 @@ export function statBars(car) {
   const s = { ...CAR, ...car.stats };
   const c = (v) => Math.max(0.05, Math.min(1, v));
   return {
-    Speed: c(s.maxSpeed / 36),
-    Acceleration: c(s.accel / 17),
-    Handling: c((s.steerRate / 2.4) * 0.6 + (s.grip / 10) * 0.4),
-    Drift: c(((5 - s.driftGrip) / 3) * 0.5 + (s.boostSpeed[1] / 12) * 0.5),
+    Speed: c(s.maxSpeed / 28),
+    Acceleration: c(s.accel / 14),
+    Handling: c((s.steerRate / 2.4) * 0.5 + (s.grip / 5) * 0.5),
+    Drift: c(((s.looseGrip - 1.5) / 1.5) * 0.35 + (s.boostSpeed[1] / 9) * 0.35 + (s.slideSteer ?? 0.6) * 0.3),
   };
 }

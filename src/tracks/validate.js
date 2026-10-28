@@ -7,7 +7,7 @@ import { Race } from '../game/Race.js';
 import { PHYSICS_DT } from '../config.js';
 
 export const LIMITS = {
-  minRadius: 14,       // m, tightest centreline corner
+  minRadius: 16,       // m, tightest centreline corner
   minWidth: 10.5,      // m, road width
   minLength: 600,
   maxLength: 2200,
@@ -41,23 +41,30 @@ export function checkGeometry(track) {
   return { ok: reasons.length === 0, reasons, minRadius: r, clearance, length: track.length };
 }
 
-/** Bot run (`laps` laps) from a standing start at the line. Returns { finished, time, wallHits, stuck }. */
-export function botLap(track, { carStats = {}, driver = {}, maxTime = 400, laps = 1 } = {}) {
+/**
+ * Bot run (`laps` laps) from a standing start at the line. Leaving the road ends a real run, so
+ * `offRoad` (seconds spent off the road) must be 0 for a track to count as drivable.
+ * Returns { finished, time, wallHits, stuck, offRoad, spins, driftShare }.
+ */
+export function botLap(track, { carStats = {}, driver = { style: 'drift' }, maxTime = 400, laps = 1 } = {}) {
   const car = new Car(carStats);
   const i0 = track.wrap(-3);
   car.reset(track.x[i0], track.z[i0], track.headingAt(i0), 0);
   const bot = new Driver(track, driver);
   const race = new Race(track, laps);
   race.reset(car);
-  let wallHits = 0, stuck = 0, stuckMax = 0, offRoad = 0;
+  let wallHits = 0, stuck = 0, stuckMax = 0, offRoad = 0, spins = 0, wasSpin = false, drifting = 0, n = 0;
   const steps = Math.round(maxTime / PHYSICS_DT);
   for (let i = 0; i < steps; i++) {
     car.step(bot.drive(car), PHYSICS_DT, track);
     for (const e of car.events) if (e.type === 'wall' && e.strength > 0.15) wallHits++;
     race.update(car, PHYSICS_DT);
     if (!car.onRoad) offRoad += PHYSICS_DT;
+    n++; if (car.drifting) drifting++;
+    if (car.spinning && !wasSpin) spins++;
+    wasSpin = car.spinning;
     if (car.speed < 3) { stuck += PHYSICS_DT; stuckMax = Math.max(stuckMax, stuck); } else stuck = 0;
-    if (race.finished || stuckMax > 4) break;
+    if (race.finished || stuckMax > 4 || offRoad > 0.5) break;
   }
-  return { finished: race.finished, time: race.finishTime, wallHits, stuck: stuckMax > 4, offRoad };
+  return { finished: race.finished, time: race.finishTime, wallHits, stuck: stuckMax > 4, offRoad, spins, driftShare: drifting / Math.max(1, n) };
 }
