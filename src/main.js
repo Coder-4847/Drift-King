@@ -1,5 +1,8 @@
 import { Input } from './input/Input.js';
 import { Game } from './game/Game.js';
+import { App } from './App.js';
+import { settings } from './settings.js';
+import { levelById } from './game/career.js';
 import { showTrackPreview } from './ui/TrackPreview.js';
 
 const params = new URLSearchParams(location.search);
@@ -8,17 +11,29 @@ if (params.has('preview')) {
   // debug: minimap of every track
   showTrackPreview(document.body);
 } else {
+  if (params.has('layout')) settings.touchLayout = params.get('layout') === 'halves' ? 'halves' : 'corners';
+
   const input = new Input(document.getElementById('touch'));
+  let app;
   const game = new Game({
     canvas: document.getElementById('game'),
     hudRoot: document.getElementById('hud'),
-    overlayRoot: document.getElementById('overlay'),
     input,
     debug: params.has('debug'),
+    onPauseButton: () => app.pause(),
+    onAutoPause: () => app.pause(),
   });
+  app = new App({ game, input, overlayRoot: document.getElementById('overlay') });
 
   if (params.has('at')) game.debugStart = parseFloat(params.get('at')); // debug: start part-way round
-  game.loadTrack(params.get('track') || 'c1l1');
+  game.loadTrack('c1l1');
   game.start();
-  window.__game = game; // handy for console tuning / automated tests
+
+  const track = params.get('track');
+  if (track) {
+    if (levelById(track)) app.startCareerRace(track); else app.startFreeRace(track); // debug shortcut
+  } else {
+    app.openMainMenu();
+  }
+  window.__game = game; window.__app = app; // handy for console tuning / automated tests
 }

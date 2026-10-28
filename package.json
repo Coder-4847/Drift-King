@@ -11,7 +11,8 @@
     "sim": "node tools/sim.js",
     "tracks": "node tools/buildTracks.js",
     "verify": "node tools/verifyTracks.js",
-    "test": "node tools/racetest.js && node tools/verifyTracks.js"
+    "levels": "node tools/buildLevels.js",
+    "test": "node tools/careertest.js && node tools/racetest.js && node tools/verifyTracks.js"
   },
   "dependencies": {
     "three": "^0.186.1"

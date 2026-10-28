@@ -1,30 +1,46 @@
-// Owns the renderer, the fixed-timestep loop and the current race (Phase 1: free driving
-// on one test track). Later phases add game modes on top of this.
+// Owns the renderer, the fixed-timestep loop, the scene for the current track and the race
+// state machine:
+//   demo       a bot drives behind the menus (no HUD)
+//   countdown  3-2-1-GO, car held on the line
+//   racing     player drives, race clock runs
+//   finished   run over: the bot rolls the car out while the result screen is prepared
+// Menus / game modes live in App.js and talk to this class through a few methods + callbacks.
 
 import * as THREE from 'three';
 import { PHYSICS_DT, QUALITY } from '../config.js';
 import { settings } from '../settings.js';
 import { CARS } from '../data/cars.js';
+import { CHAPTERS } from '../data/chapters.js';
 import { Car } from './Car.js';
 import { CarModel } from './CarModel.js';
 import { CameraRig } from './CameraRig.js';
 import { Smoke, SkidMarks } from './Particles.js';
 import { World } from './World.js';
-import { Track } from '../tracks/Track.js';
-import { getTrackDef } from '../tracks/trackDefs.js';
-import { CHAPTERS } from '../data/chapters.js';
 import { Race } from './Race.js';
+import { Track } from '../tracks/Track.js';
 import { TrackBuilder } from '../tracks/TrackBuilder.js';
+import { getTrackDef } from '../tracks/trackDefs.js';
+import { Driver } from '../ai/Driver.js';
 import { Hud } from '../ui/Hud.js';
-import { Menu } from '../ui/Menu.js';
+import { fmtTime } from '../util/format.js';
 
-const fmtTime = (t) => t.toFixed(2);
+const COUNTDOWN = 3.2;      // seconds of 3-2-1 before GO
+const FINISH_DELAY = 1.7;   // seconds of roll-out before the result screen
+
+function disposeScene(scene) {
+  scene.traverse((o) => {
+    o.geometry?.dispose?.();
+    const m = o.material;
+    if (m) (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose?.());
+  });
+}
 
 export class Game {
-  constructor({ canvas, hudRoot, overlayRoot, input, debug = false }) {
+  constructor({ canvas, hudRoot, input, debug = false, onPauseButton, onAutoPause, onFinish }) {
     this.canvas = canvas;
     this.input = input;
     this.debug = debug;
+    this.onFinish = onFinish;
     this.quality = QUALITY[settings.quality] || QUALITY.high;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -35,37 +51,47 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.rig = new CameraRig(innerWidth / innerHeight);
+    this.hud = new Hud(hudRoot, input, { debug, onPause: () => onPauseButton?.() });
 
-    this.hud = new Hud(hudRoot, input, { debug, onPause: () => this.togglePause() });
-    this.menu = new Menu(overlayRoot, input);
-
+    this.mode = 'demo';
     this.time = 0;       // simulation clock (stops while paused)
     this.acc = 0;
     this.paused = false;
     this.fps = 60;
+    this.countdown = 0;
+    this.finishTimer = 0;
+    this.trackId = null;
 
-    input.onNav((a) => { if (a === 'pause') this.togglePause(); }); // Esc / P / Start
-    input.onDevice(() => input.setTouchVisible(!this.paused));
+    input.onDevice(() => this.updateTouch());
     addEventListener('resize', () => this.resize());
     addEventListener('orientationchange', () => setTimeout(() => this.resize(), 100));
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.pause(); });
-    addEventListener('blur', () => this.pause());
+    const auto = () => { if (this.canPause()) onAutoPause?.(); };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) auto(); });
+    addEventListener('blur', auto);
 
     this.resize();
   }
 
+  get racing() { return this.mode === 'countdown' || this.mode === 'racing'; }
+  canPause() { return this.racing && !this.paused; }
+
+  updateTouch() { this.input.setTouchVisible(this.racing && !this.paused); }
+
   // ---------------------------------------------------------------- setup
-  loadTrack(id) {
+  loadTrack(id, { laps } = {}) {
     const def = getTrackDef(id);
+    if (this.trackId === id && (laps ?? def.laps) === this.race.laps) { this.enterDemo(); return; }
+    this.trackId = id;
     const chapter = CHAPTERS[def.chapter];
     this.def = def;
+    disposeScene(this.scene);
     this.scene = new THREE.Scene();
     this.track = new Track(def);
     this.world = new World(this.scene, this.track, chapter.theme, chapter.props, settings.quality, def.propDensity ?? 1);
     this.renderer.toneMappingExposure = this.world.exposure;
     this.builder = new TrackBuilder(this.track, chapter.theme);
     this.scene.add(this.builder.group);
-    this.race = new Race(this.track, def.laps);
+    this.race = new Race(this.track, laps ?? def.laps);
 
     this.smoke = new Smoke(this.quality.smoke);
     this.skids = new SkidMarks(this.quality.skids);
@@ -76,54 +102,55 @@ export class Game {
     this.model = new CarModel(car.color, car.accent);
     this.scene.add(this.model.group);
 
+    this.bot = new Driver(this.track, { speedScale: 0.8 });
     this.hud.setTitle(this.track.name);
     this.hud.minimap.setTrack(this.track);
-    this.restart();
+    this.enterDemo();
   }
 
-  restart() {
+  /** frac: place the car that far round the lap, rolling; omit for the standing start. */
+  placeAtStart(frac = this.debugStart) {
     const t = this.track;
-    const i = t.wrap(this.debugStart != null ? Math.floor(this.debugStart * t.n) : -3); // behind the line (debug: ?at=0.3)
-    this.car.reset(t.x[i], t.z[i], t.headingAt(i), this.debugStart != null ? 18 : 0);
-    this.car.q = {};
+    const i = t.wrap(frac != null ? Math.floor(frac * t.n) : -3); // debug: ?at=0.3
+    this.car.reset(t.x[i], t.z[i], t.headingAt(i), frac != null ? 18 : 0);
     this.race.reset(this.car);
     this.skids.clear();
     this.smoke.clear();
-    this.time = 0;
     this.acc = 0;
     this.smokeAcc = 0;
     this.steerShown = 0;
     this.rig.snap(this.car);
     this.world.followShadow(this.car.x, this.car.z);
-    this.hud.setBig(fmtTime(0));
-    this.hud.hideHints();
-    this.hud.showHints();
-    this.resume();
   }
 
-  // ---------------------------------------------------------------- pause
-  pause() {
-    if (this.paused || !this.track) return;
-    this.paused = true;
-    this.input.setTouchVisible(false);
-    this.menu.show({
-      title: 'Paused',
-      items: [
-        { label: 'Resume', action: () => this.resume() },
-        { label: 'Restart', action: () => this.restart() },
-      ],
-      onBack: () => this.resume(),
-    });
-  }
-
-  resume() {
+  enterDemo() {
+    this.mode = 'demo';
     this.paused = false;
-    this.menu.hide();
-    this.input.setTouchVisible(true);
-    this.last = performance.now();
+    this.bot.o.speedScale = 0.8;
+    this.placeAtStart(this.debugStart ?? Math.random() * 0.9); // menu background starts somewhere on the lap
+    this.hud.setVisible(false);
+    this.hud.hideHints();
+    this.updateTouch();
   }
 
-  togglePause() { this.paused ? this.resume() : this.pause(); }
+  /** Reset to the grid and run the 3-2-1 countdown, then the clock starts. */
+  startRace() {
+    this.placeAtStart();
+    this.mode = 'countdown';
+    this.paused = false;
+    this.countdown = COUNTDOWN;
+    this.finishTimer = 0;
+    this.hud.setVisible(true);
+    this.hud.setBig(fmtTime(0));
+    this.hud.setLap(this.race.laps > 1 ? `LAP 1/${this.race.laps}` : '');
+    this.hud.setWrongWay(false);
+    this.hud.hideHints();
+    this.hud.driftReset();
+    this.updateTouch();
+  }
+
+  pause() { if (!this.canPause()) return false; this.paused = true; this.updateTouch(); return true; }
+  resume() { this.paused = false; this.last = performance.now(); this.updateTouch(); }
 
   // ---------------------------------------------------------------- loop
   resize() {
@@ -150,38 +177,79 @@ export class Game {
 
     const inp = this.input.update(dt);
     if (!this.paused) {
+      this.time += dt;
+      this.stepMode(dt);
       this.acc += dt;
       while (this.acc >= PHYSICS_DT) {
         this.acc -= PHYSICS_DT;
         this.simStep(inp);
       }
-      this.time += dt;
-      this.effects(dt, inp);
+      this.effects(dt);
     }
     this.draw(dt, inp);
   }
 
-  simStep(inp) {
-    const car = this.car;
-    car.step(inp, PHYSICS_DT, this.track);
-    for (const e of this.race.update(car, PHYSICS_DT)) {
-      if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${e.lapTime.toFixed(2)}`);
-      else if (e.type === 'finish') this.hud.toast(`FINISH   ${e.time.toFixed(2)}`, 4);
-    }
-    for (const e of car.events) {
-      if (e.type === 'boost') this.pendingBoost = e.tier;
-      else if (e.type === 'driftEnd') this.hud.driftEnded(e.score, this.pendingBoost ?? -1), (this.pendingBoost = undefined);
+  stepMode(dt) {
+    if (this.mode === 'countdown') {
+      this.countdown -= dt;
+      const n = Math.ceil(this.countdown - (COUNTDOWN - 3));
+      if (this.countdown > COUNTDOWN - 3) this.hud.countdown(String(n));
+      else if (this.countdown > 0) this.hud.countdown(null);
+      if (this.countdown <= 0) {
+        this.mode = 'racing';
+        this.hud.countdown('GO!', 0.7);
+        this.hud.showHints();
+      }
+    } else if (this.mode === 'finished') {
+      this.finishTimer -= dt;
+      if (this.finishTimer <= 0 && !this.reported) {
+        this.reported = true;
+        this.onFinish?.({
+          time: this.race.finishTime, lapTimes: this.race.lapTimes, driftScore: this.car.totalDriftScore + this.car.driftScore,
+        });
+      }
     }
   }
 
-  effects(dt, inp) {
+  simStep(inp) {
     const car = this.car;
-    this.hud.tick(dt);
-    this.hud.setBig(fmtTime(this.race.time));
-    this.hud.setLap(this.race.laps > 1 ? `LAP ${this.race.lapDisplay}/${this.race.laps}` : '');
-    this.hud.setWrongWay(this.race.wrongWay);
-    this.hud.driftLive(car.driftActive ? car.driftScore : 0);
-    if (car.driftActive || car.drifting) this.hud.hideHints();
+    if (this.mode === 'countdown') return; // held on the grid
+    const control = this.mode === 'racing' ? inp : this.bot.drive(car);
+    car.step(control, PHYSICS_DT, this.track);
+
+    for (const e of car.events) {
+      if (this.mode !== 'racing') break;
+      if (e.type === 'boost') this.pendingBoost = e.tier;
+      else if (e.type === 'driftEnd') { this.hud.driftEnded(e.score, this.pendingBoost ?? -1); this.pendingBoost = undefined; }
+    }
+    if (this.mode === 'racing') {
+      for (const e of this.race.update(car, PHYSICS_DT)) {
+        if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${fmtTime(e.lapTime)}`);
+        else if (e.type === 'finish') {
+          this.mode = 'finished';
+          this.finishTimer = FINISH_DELAY;
+          this.reported = false;
+          this.bot.o.speedScale = 0.45;
+          this.updateTouch();
+          this.hud.hideHints();
+          this.hud.toast(`FINISH   ${fmtTime(e.time)}`, 3);
+        }
+      }
+    }
+  }
+
+  effects(dt) {
+    const car = this.car;
+    if (this.mode === 'racing' || this.mode === 'finished') {
+      this.hud.tick(dt);
+      this.hud.setBig(fmtTime(this.race.time));
+      this.hud.setLap(this.race.laps > 1 ? `LAP ${this.race.lapDisplay}/${this.race.laps}` : '');
+      this.hud.setWrongWay(this.mode === 'racing' && this.race.wrongWay);
+      this.hud.driftLive(this.mode === 'racing' && car.driftActive ? car.driftScore : 0);
+      if (car.driftActive || car.drifting) this.hud.hideHints();
+    } else {
+      this.hud.tick(dt);
+    }
 
     // Tyre marks + smoke from the rear wheels while the tail is loose.
     const sliding = car.gripBlend > 0.3 && Math.abs(car.slip) > 0.12 && car.speed > 6;
@@ -211,8 +279,8 @@ export class Game {
 
   draw(dt, inp) {
     const car = this.car;
-    // smooth the steering shown on the wheels
-    this.steerShown += (inp.steer - this.steerShown) * Math.min(1, 14 * dt);
+    const steer = this.mode === 'racing' ? inp.steer : this.bot.out.steer;
+    this.steerShown += (steer - this.steerShown) * Math.min(1, 14 * dt);
     this.model.update(car, this.steerShown);
 
     if (!this.paused) {
@@ -222,11 +290,11 @@ export class Game {
     }
     this.smoke.update(this.time);
     this.skids.update(this.time);
-    this.hud.minimap.draw([{ x: car.x, z: car.z, color: '#ff5a4a', big: true }]);
+    if (this.mode !== 'demo') this.hud.minimap.draw([{ x: car.x, z: car.z, color: '#ff5a4a', big: true }]);
 
     if (this.debug) {
       this.hud.debug(
-        `fps ${this.fps.toFixed(0)}  device ${this.input.device}\n` +
+        `fps ${this.fps.toFixed(0)}  device ${this.input.device}  mode ${this.mode}\n` +
         `speed ${car.speed.toFixed(1)}  slip ${(car.slip * 57.3).toFixed(0)}°  grip ${car.gripBlend.toFixed(2)}\n` +
         `steer ${inp.steer.toFixed(2)} brake ${inp.brake.toFixed(2)}  drift ${car.drifting ? 'Y' : '-'} ${car.driftTime.toFixed(1)}s\n` +
         `lat ${(car.q.lat ?? 0).toFixed(1)}  onRoad ${car.onRoad}  calls ${this.renderer.info.render.calls}`);

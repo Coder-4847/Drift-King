@@ -3,8 +3,8 @@
 Top-down 3D drifting racer for the browser (Three.js + Vite, plain JavaScript, no external assets).
 Everything - meshes, particles, sounds - is generated in code. Progress is saved in `localStorage`.
 
-> **Status: Phase 2 (Track system) done.** Phase 1 = foundation. Later phases: Career, Grand Prix,
-> audio / garage / settings UI, GitHub Pages deploy.
+> **Status: Phase 3 (Career) done.** Phases 1-2 = foundation + track system. Next: Grand Prix, then audio /
+> garage / settings UI, then the GitHub Pages deploy.
 
 ## Run it
 
@@ -15,7 +15,8 @@ npm run build      # production build in dist/
 npm run sim        # headless handling check of the car physics (tools/sim.js)
 npm run tracks     # (re)generate src/data/tracks.js: finds a valid seed for all 110 tracks
 npm run verify     # re-check all 110 tracks (geometry, bot lap, unique names)
-npm test           # lap/checkpoint/wrong-way tests + verify
+npm run levels     # (re)generate the star times in src/data/levels.js from bot reference times
+npm test           # career rules, lap/checkpoint/wrong-way tests + verify
 ```
 
 ### Debug URLs
@@ -26,6 +27,8 @@ npm test           # lap/checkpoint/wrong-way tests + verify
 | `/?track=c3l5&at=0.4` | start 40% of the way round (handy to look at a corner or an ice patch) |
 | `/?preview` | minimap of all 110 tracks with stats and a live validity check; click a tile to drive it |
 | `&debug` | on-screen speed / slip / grip readout |
+| `?layout=halves` | try the alternative touch layout (screen halves steer, brake in the centre) until Settings exists |
+| `?track=c3l5` | skips the menus and starts that level (career tracking on); `gp1`-`gp10` free-drive without tracking |
 
 ## Controls (three inputs only: Left, Right, Brake)
 
@@ -53,7 +56,8 @@ src/game/          Car physics (pure maths), car model, camera rig, particles, w
 src/tracks/        Track (spline -> samples + queries), TrackBuilder (meshes), generator (seeded),
                    validate (geometry + bot lap), trackDefs (seed -> track definition)
 src/ai/            Driver: bot that drives with the same steer + brake inputs (AI in Phase 4)
-src/ui/            HUD, overlay menu
+src/ui/            HUD, minimap, UI host (focus navigation), screens (main menu, level select, pre-race, results, pause)
+src/App.js         game flow: menus <-> races, career results
 src/data/          chapters (themes, props, name words), tracks (generated seeds), cars
 tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTracks.js, racetest.js
 ```
@@ -85,6 +89,27 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
 * **Names:** every track gets a "First Second" name (or a single word) from its chapter's lists, unique
   across all 110.
 
+## Career (Phase 3)
+
+* **Flow:** Main menu -> Career -> chapter tabs + 10-level grid -> pre-race card (name, laps, the three
+  medal times, your best) -> 3-2-1-GO -> race -> result screen (time, best, animated stars, drift score,
+  Retry / Next / Menu). Pause has Resume / Restart / Quit. Grand Prix, Garage and Settings are greyed out
+  placeholders until their phases.
+* **Stars:** each level has `gold` (3 stars), `silver` (2 stars) and `bronze` (1 star) times in
+  `src/data/levels.js`; the time is the whole run including all laps. They were generated from a bot's
+  reference run (`npm run levels`): gold = bot x 1.16 on level 1 easing to x 1.04 on level 100, silver
+  x 1.34 -> 1.20, bronze x 1.75 -> 1.50. The tool checks the perfect bot can always reach 3 stars and
+  that a bot driving at 80% speed still gets at least 1 star everywhere. **These are first guesses made
+  without human play-testing** - edit the numbers in `levels.js` (plain data) or the factors at the top of
+  `tools/buildLevels.js`.
+* **Unlocks:** finishing with >= 1 star unlocks the next level of the chapter. Chapter N needs
+  `20 x (N - 1)` total stars (`starsToUnlock` in `src/data/chapters.js`); locked chapters show a
+  "34 / 40 stars to unlock Chapter 3" progress bar. Rules + progress live in `src/game/career.js`.
+* **Saving:** `localStorage` key `driftkings.v1` (stars, best times, best drift scores per level, settings).
+  Clear it from the browser dev tools to reset until the Settings screen has a reset button.
+* **Menus on every device:** one focus system (`src/ui/UI.js`): mouse / touch click, keyboard arrows + Enter /
+  Backspace / Esc, controller D-pad or stick + A / B / Start. Menu prompts follow the last used device.
+
 ## Tuning
 
 * **Handling:** `CAR` in `src/config.js` (max speed, accel, grip, drift grip, brake strength, steering
@@ -94,6 +119,8 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
 
 ## Decisions / assumptions (ambiguities resolved the simple way)
 
+* The menu background is a slow bot drive on the current theme (demo mode), so no separate menu art is needed.
+* Time-trial laps use a 3-2-1-GO countdown; the clock starts at GO.
 * No reference screenshot was attached to the brief, so the look follows the written style description.
 * The camera swings to face the direction of travel (not north-up), so "left" and "right" always
   match the screen.

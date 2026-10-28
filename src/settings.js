@@ -22,6 +22,7 @@ const DEFAULTS = {
   },
   progress: {
     hintsSeen: false,
+    career: { stars: {}, best: {}, drift: {} },   // keyed by level id, e.g. "c3l5"
   },
 };
 
