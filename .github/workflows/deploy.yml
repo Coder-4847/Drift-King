@@ -4,7 +4,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/drift-kings-game-9fripq]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:

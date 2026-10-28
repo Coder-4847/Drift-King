@@ -36,7 +36,7 @@ npm test           # career rules, laps/checkpoints, all 110 tracks, Grand Prix 
 
 * `vite.config.js` uses `base: './'`, so the same build works at `https://<user>.github.io/<repo>/` or any other path.
 * `.github/workflows/deploy.yml` runs `npm test`, `npm run build` and publishes `dist/` on every push to `main`
-  (or the default branch listed in the workflow) and on manual runs (Actions -> Deploy to GitHub Pages -> Run workflow).
+  (the Pages environment only accepts `main`) and on manual runs (Actions -> Deploy to GitHub Pages -> Run workflow).
 * **One-time setup:** repository **Settings -> Pages -> Build and deployment -> Source: GitHub Actions**.
 * Manual deploy without Actions: `npm run build`, then publish the `dist/` folder with any static host.
 * Local preview of the production build: `npm run build && npm run preview`.
