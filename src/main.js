@@ -31,7 +31,9 @@ if (params.has('preview')) {
 
   const track = params.get('track');
   if (track) {
-    if (levelById(track)) app.startCareerRace(track); else app.startFreeRace(track); // debug shortcut
+    if (levelById(track)) app.startCareerRace(track);
+    else if (track.startsWith('gp')) app.startGpRace(track, Math.max(0, Math.min(4, parseInt(params.get('diff') ?? '2', 10)))); // &diff=0..4
+    else app.startFreeRace(track);
   } else {
     app.openMainMenu();
   }

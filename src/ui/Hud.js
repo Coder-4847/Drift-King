@@ -12,6 +12,8 @@ export class Hud {
       <div class="wrongway">WRONG WAY</div>
       <div class="toast"></div>
       <div class="countdown"></div>
+      <div class="gp-pos"></div>
+      <div class="gp-list"></div>
       <div class="drift-pop"><span></span><small></small></div>
       <div class="hint"></div>
       <button class="hud-pause" type="button" aria-label="Pause"><i></i></button>
@@ -27,6 +29,8 @@ export class Hud {
     root.querySelector('.hud-pause').addEventListener('mousedown', (e) => e.preventDefault());
     this.root = root;
     this.cd = root.querySelector('.countdown');
+    this.posEl = root.querySelector('.gp-pos');
+    this.listEl = root.querySelector('.gp-list');
     this.lap = root.querySelector('.hud-lap');
     this.wrong = root.querySelector('.wrongway');
     this.toastEl = root.querySelector('.toast');
@@ -38,6 +42,26 @@ export class Hud {
   }
 
   setTitle(t) { this.title.textContent = t; }
+
+  /** Grand Prix extras (position + standings) on or off. */
+  setGp(on) {
+    this.posEl.style.display = on ? '' : 'none';
+    this.listEl.style.display = on ? '' : 'none';
+    this.cache.pos = null; this.cache.list = null;
+  }
+
+  /** rows: [{ name, color (hex or null), you }] in race order. */
+  setStandings(rows, position, total) {
+    const sfx = ['th', 'st', 'nd', 'rd'][position % 100 > 10 && position % 100 < 14 ? 0 : position % 10 < 4 ? position % 10 : 0];
+    const posHtml = `${position}<sup>${sfx}</sup><small>/${total}</small>`;
+    if (this.cache.pos !== posHtml) { this.cache.pos = posHtml; this.posEl.innerHTML = posHtml; }
+    const key = rows.map((r) => r.name).join();
+    if (this.cache.list !== key) {
+      this.cache.list = key;
+      this.listEl.innerHTML = rows.map((r, i) =>
+        `<div class="${r.you ? 'you' : ''}"><b>${i + 1}</b><i style="background:${r.color == null ? '#ff5a4a' : '#' + r.color.toString(16).padStart(6, '0')}"></i>${r.name}</div>`).join('');
+    }
+  }
 
   setVisible(v) { this.root.style.display = v ? '' : 'none'; }
 

@@ -113,11 +113,11 @@ export class SkidMarks {
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 2;
-    this.last = [null, null]; // previous point for each wheel
+    this.last = {}; // previous point for each wheel id
     this.dirty = false;
   }
 
-  /** Extend the mark of one wheel (0/1) to (x,z); pass null to break the line. */
+  /** Extend the mark of one wheel (any id) to (x,z); pass null to break the line. */
   add(time, wheel, x, z, width = 0.34) {
     const prev = this.last[wheel];
     if (x === null) { this.last[wheel] = null; return; }
@@ -142,5 +142,5 @@ export class SkidMarks {
     if (this.dirty) { this.posAttr.needsUpdate = true; this.birthAttr.needsUpdate = true; this.dirty = false; }
   }
 
-  clear() { this.birth.fill(NEVER); this.last = [null, null]; this.dirty = true; }
+  clear() { this.birth.fill(NEVER); this.last = {}; this.dirty = true; }
 }

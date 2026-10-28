@@ -3,8 +3,8 @@
 Top-down 3D drifting racer for the browser (Three.js + Vite, plain JavaScript, no external assets).
 Everything - meshes, particles, sounds - is generated in code. Progress is saved in `localStorage`.
 
-> **Status: Phase 3 (Career) done.** Phases 1-2 = foundation + track system. Next: Grand Prix, then audio /
-> garage / settings UI, then the GitHub Pages deploy.
+> **Status: Phase 4 (Grand Prix) done.** Phases 1-3 = foundation, track system, Career. Next: audio, garage,
+> settings UI, ghost, performance pass; then the GitHub Pages deploy.
 
 ## Run it
 
@@ -16,7 +16,9 @@ npm run sim        # headless handling check of the car physics (tools/sim.js)
 npm run tracks     # (re)generate src/data/tracks.js: finds a valid seed for all 110 tracks
 npm run verify     # re-check all 110 tracks (geometry, bot lap, unique names)
 npm run levels     # (re)generate the star times in src/data/levels.js from bot reference times
-npm test           # career rules, lap/checkpoint/wrong-way tests + verify
+npm run aitune     # how fast is each AI difficulty vs the reference lap (compare with the `pace` column)
+npm run gpsim -- gp5 3   # headless 6-car race on a GP track at a difficulty (0-4)
+npm test           # career rules, lap/checkpoint/wrong-way, all 110 tracks, Grand Prix AI races
 ```
 
 ### Debug URLs
@@ -28,7 +30,8 @@ npm test           # career rules, lap/checkpoint/wrong-way tests + verify
 | `/?preview` | minimap of all 110 tracks with stats and a live validity check; click a tile to drive it |
 | `&debug` | on-screen speed / slip / grip readout |
 | `?layout=halves` | try the alternative touch layout (screen halves steer, brake in the centre) until Settings exists |
-| `?track=c3l5` | skips the menus and starts that level (career tracking on); `gp1`-`gp10` free-drive without tracking |
+| `?track=c3l5` | skips the menus and starts that Career level |
+| `?track=gp4&diff=3` | skips the menus and starts a Grand Prix race (`diff` 0 Rookie ... 4 Legendary) |
 
 ## Controls (three inputs only: Left, Right, Brake)
 
@@ -52,13 +55,15 @@ screen lands in Phase 5.
 src/config.js      all handling / camera / quality constants (start here to tune the feel)
 src/settings.js    settings + save data (localStorage)
 src/input/         one input layer -> { steer: -1..1, brake: 0..1 }; keyboard, gamepad, touch
-src/game/          Car physics (pure maths), car model, camera rig, particles, world, game loop
+src/game/          Car physics (pure maths), GridRace (multi-car race, standings), collisions, Race (laps),
+                   career / gp (progress + rules), car model, camera rig, particles, world, game loop
 src/tracks/        Track (spline -> samples + queries), TrackBuilder (meshes), generator (seeded),
                    validate (geometry + bot lap), trackDefs (seed -> track definition)
-src/ai/            Driver: bot that drives with the same steer + brake inputs (AI in Phase 4)
+src/ai/            Driver (AI / bot, steer + brake only), line (racing line)
 src/ui/            HUD, minimap, UI host (focus navigation), screens (main menu, level select, pre-race, results, pause)
 src/App.js         game flow: menus <-> races, career results
-src/data/          chapters (themes, props, name words), tracks (generated seeds), cars
+src/data/          chapters (themes, props, name words), tracks (generated seeds), levels (star times),
+                   difficulty (AI table, points, rivals), cars (+ paint rewards)
 tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTracks.js, racetest.js
 ```
 
@@ -109,6 +114,37 @@ tools/             headless helpers: sim.js (handling), buildTracks.js, verifyTr
   Clear it from the browser dev tools to reset until the Settings screen has a reset button.
 * **Menus on every device:** one focus system (`src/ui/UI.js`): mouse / touch click, keyboard arrows + Enter /
   Backspace / Esc, controller D-pad or stick + A / B / Start. Menu prompts follow the last used device.
+
+## Grand Prix (Phase 4)
+
+* **Flow:** Main menu -> Grand Prix -> difficulty tabs (Rookie ... Legendary) + 10 tracks (all unlocked) ->
+  pre-race card -> 3-2-1-GO from a 6-car grid (you start 4th) -> 3 laps -> results table with points.
+  HUD: position (`4th/6`), lap counter and a live standings list. Retry / Next track / Menu afterwards.
+* **Points:** 25-18-15-12-10-8 (`POINTS` in `src/data/difficulty.js`). Best finish per track and difficulty
+  is saved. When you finish, rivals still racing are classified by distance covered (their time is an
+  estimate, shown with `~`).
+* **Rewards:** your first win on a difficulty unlocks a car paint (`REWARD_COLORS` in `src/data/cars.js`:
+  Rookie Mint, Amateur Sky, Pro Amber, Expert Magenta, Legendary Gold). The Garage (Phase 5) lets you use them.
+* **AI** (`src/ai/Driver.js`) uses exactly the player's inputs (steer + brake, physics are shared). It follows
+  the track spline with a per-car lane, optionally an optimised **racing line** (`src/ai/line.js`), looks
+  120 m ahead for corners and brakes for them, steers around slower cars in front and is bumped by contact.
+* **Difficulty table** (`src/data/difficulty.js`, one row per level): `speed` (target speed %),
+  `cornerEntry` (how late it brakes / how much grip it trusts), `brakeSkill`, `line` (centre -> racing line),
+  `drift`, `steerNoise`, `mistake` (chance of a late brake or running wide at each braking zone), `reaction`
+  (input delay), `rubber` (rubber-banding: slows the AI down when far ahead of you, a little faster when far
+  behind; 0 on Legendary), `bump` (how much a collision upsets it). `npm run aitune` prints each level's solo
+  pace relative to the reference lap: currently ~1.50 / 1.30 / 1.13 / 1.04 / 0.99 (Rookie ... Legendary).
+  Legendary is a hair faster than the reference lap, i.e. beatable only with a clean, near-perfect run.
+* **Drifting AI:** Amateur and up kick the tail out on tighter corners (a brake tap while steering hard, the
+  same technique as the player); the better the driver, the more corners. Rookie always brakes in a straight
+  line first. They do not hold long drifts for boosts: in this handling model holding a drift costs more
+  time than it gains, so the AI uses short kicks and the table's pace is unaffected.
+* **Car-to-car bumps** (`src/game/collisions.js`): each car is two circles; overlaps are pushed apart gently
+  and speed is only partly cancelled, plus a small spin. No wrecks.
+* **Headless race engine:** `GridRace` runs the same logic without rendering, which is how
+  `tools/gptest.js` checks every AI finishes 3 laps on all 10 tracks at Rookie / Pro / Legendary.
+* The car now keeps 30% steering authority at a standstill (`steerMinFactor`) so nobody can get stuck nose-first
+  against a wall (found by the AI tests).
 
 ## Tuning
 

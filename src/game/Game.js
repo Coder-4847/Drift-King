@@ -21,6 +21,7 @@ import { Track } from '../tracks/Track.js';
 import { TrackBuilder } from '../tracks/TrackBuilder.js';
 import { getTrackDef } from '../tracks/trackDefs.js';
 import { Driver } from '../ai/Driver.js';
+import { GridRace } from './GridRace.js';
 import { Hud } from '../ui/Hud.js';
 import { fmtTime } from '../util/format.js';
 
@@ -61,6 +62,10 @@ export class Game {
     this.countdown = 0;
     this.finishTimer = 0;
     this.trackId = null;
+    this.grid = null;          // GridRace while a Grand Prix is running
+    this.rivalModels = [];
+    this.smokeAcc = {};
+    this.standingsTimer = 0;
 
     input.onDevice(() => this.updateTouch());
     addEventListener('resize', () => this.resize());
@@ -80,7 +85,7 @@ export class Game {
   // ---------------------------------------------------------------- setup
   loadTrack(id, { laps } = {}) {
     const def = getTrackDef(id);
-    if (this.trackId === id && (laps ?? def.laps) === this.race.laps) { this.enterDemo(); return; }
+    if (this.trackId === id && (laps ?? def.laps) === this.soloRace.laps) { this.enterDemo(); return; }
     this.trackId = id;
     const chapter = CHAPTERS[def.chapter];
     this.def = def;
@@ -91,7 +96,10 @@ export class Game {
     this.renderer.toneMappingExposure = this.world.exposure;
     this.builder = new TrackBuilder(this.track, chapter.theme);
     this.scene.add(this.builder.group);
-    this.race = new Race(this.track, laps ?? def.laps);
+    this.soloRace = new Race(this.track, laps ?? def.laps);
+    this.race = this.soloRace;
+    this.grid = null;
+    this.rivalModels = [];
 
     this.smoke = new Smoke(this.quality.smoke);
     this.skids = new SkidMarks(this.quality.skids);
@@ -111,19 +119,47 @@ export class Game {
   /** frac: place the car that far round the lap, rolling; omit for the standing start. */
   placeAtStart(frac = this.debugStart) {
     const t = this.track;
-    const i = t.wrap(frac != null ? Math.floor(frac * t.n) : -3); // debug: ?at=0.3
-    this.car.reset(t.x[i], t.z[i], t.headingAt(i), frac != null ? 18 : 0);
-    this.race.reset(this.car);
+    if (this.grid) {
+      this.grid.reset();
+    } else {
+      const i = t.wrap(frac != null ? Math.floor(frac * t.n) : -3); // debug: ?at=0.3
+      this.car.reset(t.x[i], t.z[i], t.headingAt(i), frac != null ? 18 : 0);
+      this.race.reset(this.car);
+    }
     this.skids.clear();
     this.smoke.clear();
     this.acc = 0;
-    this.smokeAcc = 0;
+    this.smokeAcc = {};
     this.steerShown = 0;
     this.rig.snap(this.car);
     this.world.followShadow(this.car.x, this.car.z);
   }
 
+  clearGrid() {
+    for (const m of this.rivalModels) this.scene.remove(m.group);
+    this.rivalModels = [];
+    this.grid = null;
+    this.race = this.soloRace;
+  }
+
+  /** Six cars on the grid: the player plus five AI rivals of the given difficulty. */
+  setupGrid(difficulty) {
+    this.clearGrid();
+    this.grid = new GridRace({
+      track: this.track, laps: 3, difficulty, playerCar: this.car, playerSlot: 3, seed: 1 + Math.floor(Math.random() * 1e6),
+    });
+    this.race = this.grid.player.race;
+    for (const e of this.grid.entries) {
+      if (e.isPlayer) continue;
+      const m = new CarModel(e.color, 0xf4efe6);
+      e.model = m;
+      this.scene.add(m.group);
+      this.rivalModels.push(m);
+    }
+  }
+
   enterDemo() {
+    this.clearGrid();
     this.mode = 'demo';
     this.paused = false;
     this.bot.o.speedScale = 0.8;
@@ -134,18 +170,21 @@ export class Game {
   }
 
   /** Reset to the grid and run the 3-2-1 countdown, then the clock starts. */
-  startRace() {
+  startRace(gp = null) {
+    if (gp) this.setupGrid(gp.difficulty); else this.clearGrid();
     this.placeAtStart();
     this.mode = 'countdown';
     this.paused = false;
     this.countdown = COUNTDOWN;
     this.finishTimer = 0;
     this.hud.setVisible(true);
+    this.hud.setGp(!!this.grid);
     this.hud.setBig(fmtTime(0));
     this.hud.setLap(this.race.laps > 1 ? `LAP 1/${this.race.laps}` : '');
     this.hud.setWrongWay(false);
     this.hud.hideHints();
     this.hud.driftReset();
+    if (this.grid) this.updateStandings(true);
     this.updateTouch();
   }
 
@@ -206,6 +245,7 @@ export class Game {
         this.reported = true;
         this.onFinish?.({
           time: this.race.finishTime, lapTimes: this.race.lapTimes, driftScore: this.car.totalDriftScore + this.car.driftScore,
+          standings: this.grid ? this.grid.finalResults() : null,
         });
       }
     }
@@ -215,25 +255,28 @@ export class Game {
     const car = this.car;
     if (this.mode === 'countdown') return; // held on the grid
     const control = this.mode === 'racing' ? inp : this.bot.drive(car);
-    car.step(control, PHYSICS_DT, this.track);
+    if (this.grid) {
+      this.grid.step(PHYSICS_DT, control);
+    } else {
+      car.step(control, PHYSICS_DT, this.track);
+      if (this.mode === 'racing') this.race.update(car, PHYSICS_DT);
+    }
+    if (this.mode !== 'racing') return;
 
     for (const e of car.events) {
-      if (this.mode !== 'racing') break;
       if (e.type === 'boost') this.pendingBoost = e.tier;
       else if (e.type === 'driftEnd') { this.hud.driftEnded(e.score, this.pendingBoost ?? -1); this.pendingBoost = undefined; }
     }
-    if (this.mode === 'racing') {
-      for (const e of this.race.update(car, PHYSICS_DT)) {
-        if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${fmtTime(e.lapTime)}`);
-        else if (e.type === 'finish') {
-          this.mode = 'finished';
-          this.finishTimer = FINISH_DELAY;
-          this.reported = false;
-          this.bot.o.speedScale = 0.45;
-          this.updateTouch();
-          this.hud.hideHints();
-          this.hud.toast(`FINISH   ${fmtTime(e.time)}`, 3);
-        }
+    for (const e of this.race.events) {
+      if (e.type === 'lap' && !this.race.finished) this.hud.toast(`LAP ${e.lap + 1}   ${fmtTime(e.lapTime)}`);
+      else if (e.type === 'finish') {
+        this.mode = 'finished';
+        this.finishTimer = FINISH_DELAY;
+        this.reported = false;
+        this.bot.o.speedScale = 0.45;
+        this.updateTouch();
+        this.hud.hideHints();
+        this.hud.toast(`FINISH   ${fmtTime(e.time)}`, 3);
       }
     }
   }
@@ -251,21 +294,31 @@ export class Game {
       this.hud.tick(dt);
     }
 
-    // Tyre marks + smoke from the rear wheels while the tail is loose.
+    if (this.grid) {
+      for (const e of this.grid.entries) this.emitCar(e.car, e.id, dt, e.isPlayer ? 1 : 0.6);
+      this.standingsTimer -= dt;
+      if (this.standingsTimer <= 0) { this.standingsTimer = 0.15; this.updateStandings(); }
+    } else {
+      this.emitCar(this.car, 0, dt, 1);
+    }
+  }
+
+  // Tyre marks + smoke from the rear wheels while the tail is loose.
+  emitCar(car, id, dt, rate) {
     const sliding = car.gripBlend > 0.3 && Math.abs(car.slip) > 0.12 && car.speed > 6;
     const w = { x: 0, z: 0 };
     for (let k = 0; k < 2; k++) {
       if (sliding && car.onRoad) {
         car.wheelPos(k ? 1 : -1, w);
-        this.skids.add(this.time, k, w.x, w.z);
+        this.skids.add(this.time, id * 2 + k, w.x, w.z);
       } else {
-        this.skids.add(this.time, k, null);
+        this.skids.add(this.time, id * 2 + k, null);
       }
     }
     if (sliding || (car.boosting && car.speed > 20)) {
-      this.smokeAcc += dt * (sliding ? 60 : 24);
-      while (this.smokeAcc >= 1) {
-        this.smokeAcc -= 1;
+      this.smokeAcc[id] = (this.smokeAcc[id] || 0) + dt * (sliding ? 60 : 24) * rate;
+      while (this.smokeAcc[id] >= 1) {
+        this.smokeAcc[id] -= 1;
         const side = Math.random() < 0.5 ? -1 : 1;
         car.wheelPos(side, w);
         const sp = 1.2 + Math.random() * 1.6;
@@ -277,11 +330,18 @@ export class Game {
     }
   }
 
+  updateStandings() {
+    const g = this.grid;
+    if (!g) return;
+    this.hud.setStandings(g.standings.map((e) => ({ name: e.name, color: e.color, you: e.isPlayer })), g.player.position, g.entries.length);
+  }
+
   draw(dt, inp) {
     const car = this.car;
     const steer = this.mode === 'racing' ? inp.steer : this.bot.out.steer;
     this.steerShown += (steer - this.steerShown) * Math.min(1, 14 * dt);
     this.model.update(car, this.steerShown);
+    if (this.grid) for (const e of this.grid.entries) if (e.model) e.model.update(e.car, e.driver.out.steer);
 
     if (!this.paused) {
       this.rig.update(car, dt);
@@ -290,7 +350,12 @@ export class Game {
     }
     this.smoke.update(this.time);
     this.skids.update(this.time);
-    if (this.mode !== 'demo') this.hud.minimap.draw([{ x: car.x, z: car.z, color: '#ff5a4a', big: true }]);
+    if (this.mode !== 'demo') {
+      const dots = this.grid
+        ? this.grid.entries.map((e) => ({ x: e.car.x, z: e.car.z, big: e.isPlayer, color: e.isPlayer ? '#ff5a4a' : '#' + e.color.toString(16).padStart(6, '0') }))
+        : [{ x: car.x, z: car.z, color: '#ff5a4a', big: true }];
+      this.hud.minimap.draw(dots);
+    }
 
     if (this.debug) {
       this.hud.debug(

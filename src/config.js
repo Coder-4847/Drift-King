@@ -11,6 +11,7 @@ export const CAR = {
 
   steerRate: 2.05,       // max yaw rate (rad/s) at full steering
   steerRefSpeed: 7,      // speed at which steering reaches full strength
+  steerMinFactor: 0.3,   // steering authority at standstill (so the car can never be stuck facing a wall)
   steerResponse: 14,     // how fast yaw rate follows input (1/s)
 
   grip: 8.5,             // lateral velocity decay (1/s) with full grip

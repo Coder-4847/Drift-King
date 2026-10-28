@@ -23,6 +23,7 @@ const DEFAULTS = {
   progress: {
     hintsSeen: false,
     career: { stars: {}, best: {}, drift: {} },   // keyed by level id, e.g. "c3l5"
+    gp: { best: {}, rewards: {} },                // best[trackId][difficultyId] = { pos, points, time }; rewards[difficultyId] = true
   },
 };
 

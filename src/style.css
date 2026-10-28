@@ -243,3 +243,33 @@ html, body {
   .ch-head p { display: none; }
   .hint { bottom: calc(var(--safe-b) + 100px); }
 }
+
+/* Grand Prix HUD: position + live standings */
+.gp-pos { position: absolute; left: calc(var(--safe-l) + 14px); top: calc(var(--safe-t) + clamp(92px, 24vmin, 150px) + 22px);
+  font-weight: 900; font-size: clamp(34px, 9vmin, 56px); line-height: 1; text-shadow: 0 2px 10px rgba(0,0,0,0.45); font-style: italic; }
+.gp-pos sup { font-size: 0.42em; margin-left: 1px; vertical-align: 0.9em; } .gp-pos small { font-size: 0.45em; opacity: 0.75; font-weight: 700; }
+.gp-list { position: absolute; right: calc(var(--safe-r) + 12px); top: calc(var(--safe-t) + 66px); display: flex; flex-direction: column; gap: 3px;
+  font-weight: 700; font-size: clamp(11px, 2.5vmin, 14px); text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+.gp-list div { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 6px; border-radius: 8px; background: rgba(10,10,10,0.3); }
+.gp-list div.you { background: rgba(255,255,255,0.88); color: #1c1f1a; text-shadow: none; }
+.gp-list b { width: 1.1em; text-align: right; opacity: 0.85; } .gp-list i { width: 0.7em; height: 0.7em; border-radius: 50%; display: inline-block; }
+.debug { top: calc(var(--safe-t) + clamp(92px, 24vmin, 150px) + 70px) !important; }
+
+/* Grand Prix screens */
+.diffs .tab { padding: 9px 12px; font-size: 15px; }
+.swatch { display: inline-block; width: 0.9em; height: 0.9em; border-radius: 50%; margin-right: 6px; vertical-align: -0.1em; border: 1px solid rgba(255,255,255,0.5); }
+.gp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 560px) { .gp-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.tile.gp { min-height: 0; padding: 8px 4px; position: relative; }
+.tile.gp canvas { width: 76px; height: 76px; background: rgba(0,0,0,0.18); border-radius: 8px; }
+.tile.gp .nm { font-size: 12px; opacity: 0.9; }
+.tile.gp .badge { position: absolute; top: 6px; right: 8px; font-size: 12px; font-weight: 800; opacity: 0.85; }
+.tile.gp.gold .badge { color: #ffcf3a; opacity: 1; }
+.table { width: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.table > div { display: grid; grid-template-columns: 1.6em 14px 1fr auto 2.6em; gap: 8px; align-items: center; padding: 7px 12px; border-radius: 10px; background: rgba(255,255,255,0.09); font-size: 16px; text-align: left; }
+.table > div.you { background: rgba(255,255,255,0.9); color: #1c1f1a; font-weight: 800; }
+.table i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.table em { font-style: normal; font-variant-numeric: tabular-nums; opacity: 0.85; font-size: 14px; }
+.table u { text-decoration: none; font-weight: 800; text-align: right; }
+.scr-gpres .card { width: min(420px, 92vw); }
+@media (max-height: 520px) { .table > div { padding: 3px 10px; font-size: 13px; } }

@@ -1,8 +1,11 @@
 // Game flow: menus <-> races. Owns the UI host and wires Game callbacks to screens + career rules.
 
 import { UI } from './ui/UI.js';
-import { mainMenu, levelSelect, preRace, results, pauseMenu } from './ui/screens.js';
+import { mainMenu, levelSelect, preRace, results, pauseMenu, gpSelect, gpPreRace, gpResults } from './ui/screens.js';
 import * as career from './game/career.js';
+import * as gp from './game/gp.js';
+import { DIFFICULTIES } from './data/difficulty.js';
+import { gpTracks } from './tracks/trackDefs.js';
 
 export class App {
   constructor({ game, input, overlayRoot }) {
@@ -11,6 +14,8 @@ export class App {
     this.ui = new UI(overlayRoot);
     this.current = null;      // career level being raced (null = free drive / menus)
     this.lastChapter = 0;
+    this.currentGp = null;    // { trackId, diff } while a Grand Prix race is on
+    this.gpDiff = 0;
 
     game.onFinish = (r) => this.finished(r);
     input.onNav((a) => this.onNav(a));
@@ -24,7 +29,7 @@ export class App {
 
   // ---------------------------------------------------------------- menus
   openMainMenu() {
-    this.current = null;
+    this.current = null; this.currentGp = null;
     this.game.loadTrack(this.game.trackId || 'c1l1');
     this.ui.open(mainMenu(this));
   }
@@ -33,6 +38,27 @@ export class App {
     this.current = null;
     if (this.game.mode !== 'demo') this.game.enterDemo(); // drops the race HUD
     this.ui.open(levelSelect(this, chapter, level));
+  }
+
+  // ---------------------------------------------------------------- Grand Prix
+  openGpSelect(diff = this.gpDiff, focusTrack = null) {
+    this.current = null; this.currentGp = null;
+    if (this.game.mode !== 'demo') this.game.enterDemo();
+    this.ui.open(gpSelect(this, diff, focusTrack));
+  }
+
+  openGpPreRace(trackId, diff) {
+    this.game.loadTrack(trackId, { laps: 3 });
+    this.ui.open(gpPreRace(this, trackId, diff));
+  }
+
+  startGpRace(trackId, diff) {
+    this.current = null;
+    this.currentGp = { trackId, diff };
+    this.gpDiff = diff;
+    this.game.loadTrack(trackId, { laps: 3 });
+    this.ui.close();
+    this.game.startRace({ difficulty: DIFFICULTIES[diff] });
   }
 
   openPreRace(id) {
@@ -59,6 +85,14 @@ export class App {
   }
 
   finished(r) {
+    if (this.currentGp && r.standings) {
+      const { trackId, diff } = this.currentGp;
+      const rec = gp.recordGp(trackId, diff, r.standings);
+      const list = gpTracks(), idx = list.findIndex((t) => t.id === trackId);
+      this.game.hud.setVisible(false);
+      this.ui.open(gpResults(this, { trackId, diff, standings: r.standings, rec, nextId: list[idx + 1]?.id || null }));
+      return;
+    }
     const lvl = this.current;
     if (!lvl) { this.game.hud.toast('Finished - open the pause menu to restart', 4); return; }
     const rec = career.recordResult(lvl, r.time, r.driftScore);
@@ -77,12 +111,13 @@ export class App {
 
   restartRace() {
     this.ui.close();
-    this.game.startRace();
+    this.game.startRace(this.currentGp ? { difficulty: DIFFICULTIES[this.currentGp.diff] } : null);
   }
 
   quitRace() {
     this.ui.close();
     const lvl = this.current;
+    if (this.currentGp) { const g = this.currentGp; this.game.enterDemo(); this.openGpSelect(g.diff, g.trackId); return; }
     this.game.enterDemo();
     this.openLevelSelect(lvl ? lvl.chapter : this.lastChapter, lvl ? lvl.level : null);
   }

@@ -4,7 +4,12 @@ import { el, button } from './UI.js';
 import { CHAPTERS } from '../data/chapters.js';
 import { fmtTime, fmtScore } from '../util/format.js';
 import * as career from '../game/career.js';
-import { specOf } from '../tracks/trackDefs.js';
+import * as gp from '../game/gp.js';
+import { DIFFICULTIES } from '../data/difficulty.js';
+import { REWARD_COLORS } from '../data/cars.js';
+import { specOf, gpTracks, getTrackDef } from '../tracks/trackDefs.js';
+import { Track } from '../tracks/Track.js';
+import { drawTrackPath } from './Minimap.js';
 
 const LOCK = '<svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>';
 
@@ -25,7 +30,7 @@ export function mainMenu(app) {
   const list = el('div', 'stack');
   const career_ = button('Career', () => app.openLevelSelect(), 'primary');
   const comingSoon = (label) => { const b = button(`${label}<small>soon</small>`, null); b.classList.add('disabled'); return b; };
-  list.append(career_, comingSoon('Grand Prix'), comingSoon('Garage'), comingSoon('Settings'));
+  list.append(career_, button('Grand Prix', () => app.openGpSelect()), comingSoon('Garage'), comingSoon('Settings'));
   root.appendChild(list);
   const stars = el('div', 'total', `<span class="st on">★</span> ${career.totalStars()} / ${career.maxStars()}`);
   root.appendChild(stars);
@@ -172,4 +177,126 @@ export function pauseMenu(app) {
   const p = app.input.prompts();
   if (app.input.device !== 'touch') root.appendChild(el('div', 'prompt', `${p.confirm} select  ·  ${p.back} resume`));
   return { el: root, autofocus: resume, onBack: () => app.resume() };
+}
+
+// ------------------------------------------------------------------ Grand Prix
+const thumbs = new Map();
+function thumb(trackId, size = 84) {
+  if (!thumbs.has(trackId)) {
+    const c = document.createElement('canvas');
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    c.width = c.height = size * dpr;
+    c.style.width = c.style.height = size + 'px';
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawTrackPath(ctx, new Track(getTrackDef(trackId)), size, { lineWidth: 3.5, pad: 6 });
+    thumbs.set(trackId, c);
+  }
+  const c = thumbs.get(trackId).cloneNode();
+  c.getContext('2d').drawImage(thumbs.get(trackId), 0, 0);
+  return c;
+}
+
+const DIFF_BLURB = [
+  'Very easy. Slow rivals that make mistakes and get in your way less.',
+  'Easy. A bit quicker, still makes the odd mistake.',
+  'Balanced. Competitive with a decent player.',
+  'Hard. Fast, rarely slips up, drifts the corners.',
+  'Very hard. Near-perfect line and full speed. Beatable only with a clean run.',
+];
+
+export function gpSelect(app, diff = app.gpDiff ?? 0, focusTrack = null) {
+  const root = el('div', 'scr scr-levels scr-gp');
+  const header = el('div', 'bar-top');
+  const back = button('<span class="chev">‹</span>', () => app.openMainMenu(), 'icon back');
+  header.append(back, el('h2', '', 'Grand Prix'), el('div', 'total', ''));
+  root.appendChild(header);
+
+  const tabs = el('div', 'tabs diffs');
+  const chips = DIFFICULTIES.map((d, i) => {
+    const wins = gp.winsOn(i);
+    const b = button(`${d.name}${gp.rewardUnlocked(i) ? ' <span class="st on">★</span>' : ''}`, () => select(i), 'tab');
+    b.dataset.tab = i;
+    tabs.appendChild(b);
+    return b;
+  });
+  root.appendChild(tabs);
+  const panel = el('div', 'panel');
+  root.appendChild(panel);
+  let current = -1;
+
+  function select(i, focusId = null) {
+    current = i;
+    app.gpDiff = i;
+    chips.forEach((b, k) => b.classList.toggle('sel', k === i));
+    const d = DIFFICULTIES[i], rw = REWARD_COLORS[i];
+    panel.innerHTML = '';
+    panel.appendChild(el('div', 'ch-head',
+      `<p>${DIFF_BLURB[i]}</p><div class="ch-stars"><span class="swatch" style="background:#${rw.color.toString(16).padStart(6, '0')}"></span>` +
+      `${rw.name} ${gp.rewardUnlocked(i) ? '(unlocked)' : '- win any race to unlock'} · ${gp.winsOn(i)} / 10 won</div>`));
+    const grid = el('div', 'grid gp-grid');
+    let focusEl = null;
+    gpTracks().forEach((t) => {
+      const best = gp.bestFinish(t.id, i);
+      const tile = button('', () => app.openGpPreRace(t.id, i), `tile gp${best && best.pos === 1 ? ' gold' : ''}`);
+      tile.appendChild(thumb(t.id));
+      tile.appendChild(el('span', 'nm', t.name));
+      tile.appendChild(el('span', 'badge', best ? gp.ordinal(best.pos) : '-'));
+      grid.appendChild(tile);
+      if (focusId === t.id) focusEl = tile;
+    });
+    panel.appendChild(grid);
+    return focusEl;
+  }
+  const focusEl = select(diff, focusTrack);
+  return {
+    el: root, autofocus: focusEl || chips[diff],
+    onBack: () => app.openMainMenu(),
+    onFocus: (e) => { if (e.dataset.tab !== undefined && +e.dataset.tab !== current) select(+e.dataset.tab); },
+  };
+}
+
+export function gpPreRace(app, trackId, diff) {
+  const spec = specOf(trackId), d = DIFFICULTIES[diff];
+  const best = gp.bestFinish(trackId, diff);
+  const root = el('div', 'scr scr-pre');
+  const card = el('div', 'card');
+  card.innerHTML = `<div class="kicker">Grand Prix · ${d.name}</div><h2>${spec.name}</h2>` +
+    `<div class="meta">3 laps · 6 cars · ${spec.length} m</div>`;
+  card.appendChild(thumb(trackId, 120));
+  card.appendChild(el('div', 'best', best ? `Best finish <b>${gp.ordinal(best.pos)}</b> · ${best.points} pts` : 'Not raced yet'));
+  card.appendChild(el('div', 'meta', 'Points 25 · 18 · 15 · 12 · 10 · 8'));
+  root.appendChild(card);
+  const actions = el('div', 'stack');
+  const start = button('Start', () => app.startGpRace(trackId, diff), 'primary');
+  actions.append(start, button('Back', () => app.openGpSelect(diff, trackId)));
+  root.appendChild(actions);
+  return { el: root, autofocus: start, onBack: () => app.openGpSelect(diff, trackId) };
+}
+
+export function gpResults(app, r) {
+  const { trackId, diff, standings, rec, nextId } = r;
+  const spec = specOf(trackId);
+  const root = el('div', 'scr scr-result scr-gpres');
+  const winner = standings[0].time;
+  const rows = standings.map((s, i) => {
+    const col = s.entry.color == null ? '#ff5a4a' : '#' + s.entry.color.toString(16).padStart(6, '0');
+    return `<div class="${s.entry.isPlayer ? 'you' : ''}"><b>${s.position}</b><i style="background:${col}"></i><span>${s.entry.name}</span>` +
+      `<em>${i === 0 ? fmtTime(s.time) : `${s.estimated ? '~' : ''}+${(s.time - winner).toFixed(1)}`}</em><u>${s.points}</u></div>`;
+  }).join('');
+  root.innerHTML = `
+    <div class="card">
+      <div class="kicker">${spec.name} · ${DIFFICULTIES[diff].name}</div>
+      <h2>${rec.pos === 1 ? 'Victory!' : `${gp.ordinal(rec.pos)} place`}</h2>
+      <div class="sub">+${rec.points} points${rec.newBest ? ' · <b class="newbest">NEW BEST</b>' : ''}</div>
+      <div class="table">${rows}</div>
+      ${rec.reward ? `<div class="unlocked">Paint unlocked: ${rec.reward.name}</div>` : ''}
+    </div>`;
+  const actions = el('div', 'row');
+  const retry = button('Retry', () => app.startGpRace(trackId, diff));
+  const next = button('Next', () => app.openGpPreRace(nextId, diff), 'primary');
+  if (!nextId) next.classList.add('disabled');
+  actions.append(retry, next, button('Menu', () => app.openGpSelect(diff, trackId)));
+  root.appendChild(actions);
+  return { el: root, autofocus: nextId ? next : retry, onBack: () => app.openGpSelect(diff, trackId) };
 }

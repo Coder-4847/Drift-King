@@ -80,7 +80,7 @@ export class Car {
     this.kickYaw *= Math.exp(-5 * dt);
 
     // --- steering -----------------------------------------------------------------------
-    const speedFactor = clamp(Math.abs(vF) / S.steerRefSpeed, 0, 1);
+    const speedFactor = clamp(Math.abs(vF) / S.steerRefSpeed, S.steerMinFactor, 1); // never fully locked: can always turn away from a wall
     const yawMult = lerp(1, S.driftYawMult, this.gripBlend);
     const yawTarget = -steer * S.steerRate * speedFactor * yawMult;
     this.yawVel += (yawTarget - this.yawVel) * Math.min(1, S.steerResponse * dt);
